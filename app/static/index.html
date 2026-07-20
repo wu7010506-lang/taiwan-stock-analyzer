@@ -1,0 +1,272 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="台股歷史行情與技術指標分析">
+  <title>台股研究台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="台股研究台首頁">
+      <span class="brand-mark">TW</span>
+      <span>台股研究台</span>
+    </a>
+    <div class="top-actions">
+      <a href="/alerts/" class="text-link nav-link">提醒中心</a>
+      <span id="apiStatus" class="status-dot"><i></i>服務連線中</span>
+      <a href="/watchlist/" class="text-link nav-link">我的股票</a>
+      <a href="/recommendations/" class="text-link nav-link">股票推薦</a>
+      <a href="/screener/" class="text-link nav-link">所有股票</a>
+      <a href="/docs" class="text-link utility-link">API 文件</a>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="intro">
+      <div>
+        <p class="eyebrow">TAIWAN EQUITY RESEARCH</p>
+        <h1>從資料開始，讀懂一檔股票。</h1>
+        <p>搜尋上市、上櫃公司，補齊歷史行情，快速查看價格趨勢與技術指標。</p>
+      </div>
+      <div class="intro-actions">
+        <a href="/screener/" class="button primary button-link">前往所有股票</a>
+        <button id="marketSyncButton" class="button secondary" type="button">更新全市場清單</button>
+      </div>
+    </section>
+
+    <section class="search-panel" aria-labelledby="searchTitle">
+      <h2 id="searchTitle" class="sr-only">搜尋股票</h2>
+      <label for="stockSearch">股票代號或公司名稱</label>
+      <div class="search-row">
+        <input id="stockSearch" type="search" placeholder="例如：2330 或台積電" autocomplete="off">
+        <button id="searchButton" class="button primary" type="button">搜尋</button>
+      </div>
+      <div id="searchResults" class="search-results" aria-live="polite"></div>
+    </section>
+
+    <div id="emptyState" class="empty-state">
+      <div class="empty-graphic" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+      <h2>選一檔股票開始分析</h2>
+      <p>第一次使用請先按「更新全市場清單」，完成後即可搜尋。</p>
+    </div>
+
+    <div id="workspace" class="workspace hidden">
+      <aside class="sidebar">
+        <section class="company-card">
+          <p id="stockMarket" class="market-label">TWSE</p>
+          <h2><span id="stockSymbol">2330</span> <span id="stockName">台積電</span></h2>
+          <div class="quote-row">
+            <strong id="latestClose">—</strong>
+            <span id="priceChange" class="neutral">—</span>
+          </div>
+          <p id="latestDate" class="muted">尚未載入行情</p>
+          <button id="watchlistButton" class="watchlist-button" type="button">＋ 加入我的股票</button>
+        </section>
+
+        <section class="sync-card">
+          <h3>歷史資料</h3>
+          <label for="startDate">開始日期</label>
+          <input id="startDate" type="date">
+          <label for="endDate">結束日期</label>
+          <input id="endDate" type="date">
+          <button id="historySyncButton" class="button primary full" type="button">同步歷史行情</button>
+          <div id="syncMessage" class="inline-message" aria-live="polite"></div>
+          <div class="form-divider"></div>
+          <h3>月營收資料</h3>
+          <label for="revenueStart">開始月份</label>
+          <input id="revenueStart" type="month">
+          <label for="revenueEnd">結束月份</label>
+          <input id="revenueEnd" type="month">
+          <button id="revenueSyncButton" class="button secondary full" type="button">同步月營收</button>
+          <div id="revenueSyncMessage" class="inline-message" aria-live="polite"></div>
+          <div class="form-divider"></div>
+          <h3>歷史估值</h3>
+          <label for="valuationStart">開始月份</label>
+          <input id="valuationStart" type="month">
+          <label for="valuationEnd">結束月份</label>
+          <input id="valuationEnd" type="month">
+          <button id="valuationSyncButton" class="button secondary full" type="button">同步估值資料</button>
+          <div id="valuationSyncMessage" class="inline-message" aria-live="polite"></div>
+          <div class="form-divider"></div>
+          <h3>季度財務</h3>
+          <p class="form-help">同步官方最新已申報季報；每季更新後再次同步即可累積歷史。</p>
+          <button id="financialSyncButton" class="button secondary full" type="button">同步最新財報</button>
+          <div id="financialSyncMessage" class="inline-message" aria-live="polite"></div>
+        </section>
+
+        <section class="guide-card">
+          <h3>指標提示</h3>
+          <p>RSI 高於 70 常被視為偏熱，低於 30 則可能偏弱。指標僅供研究，不代表買賣建議。</p>
+        </section>
+      </aside>
+
+      <div class="content">
+        <section class="company-profile-card">
+          <div class="section-heading compact"><div><p class="eyebrow">COMPANY PROFILE</p><h2>這家公司在做什麼？</h2></div><span id="companyIndustry" class="muted"></span></div>
+          <p id="companyBusinessSummary" class="company-summary">載入公司基本資料中…</p>
+          <div id="companyFacts" class="company-facts"></div>
+          <p class="unit-note">內容依官方產業分類摘要產業範圍；實際產品、客戶與營收結構請以公司官網及最新年報為準。</p>
+        </section>
+
+        <section class="score-card">
+          <div class="section-heading compact"><div><p class="eyebrow">TRANSPARENT RESEARCH SCORE</p><h2>個股綜合評分</h2></div><span id="scoreCoverage" class="muted"></span></div>
+          <div class="score-layout"><div id="scoreGauge" class="score-gauge"><strong>—</strong><span>資料不足</span></div><div><div id="scoreDimensions" class="score-dimensions"></div><p class="unit-note">分數是研究資料摘要，不是目標價、上漲機率或買賣建議。</p></div></div>
+          <div class="score-notes"><div><h3>主要優勢</h3><ul id="scoreStrengths"></ul></div><div><h3>風險與限制</h3><ul id="scoreRisks"></ul></div></div>
+          <details class="score-details"><summary>查看各項評分依據</summary><div id="scoreMetricDetails"></div></details>
+        </section>
+
+        <section class="chart-card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">PRICE HISTORY</p>
+              <h2>收盤價趨勢</h2>
+            </div>
+            <div class="chart-controls">
+              <select id="chartMode" aria-label="圖表類型"><option value="candlestick" selected>K線圖</option><option value="line">收盤走勢</option></select>
+              <select id="chartRange" aria-label="圖表期間">
+                <option value="60">近 3 個月</option>
+                <option value="120" selected>近 6 個月</option>
+                <option value="250">近 1 年</option>
+                <option value="1000">全部資料</option>
+              </select>
+            </div>
+          </div>
+          <div id="candlestickLegend" class="candlestick-legend"><span><i class="up-candle"></i>上漲</span><span><i class="down-candle"></i>下跌</span><span>下方柱狀為成交量</span></div>
+          <div class="chart-wrap">
+            <canvas id="priceChart" aria-label="股票價格圖"></canvas>
+            <div id="chartEmpty" class="chart-empty">同步歷史行情後顯示圖表</div>
+          </div>
+        </section>
+
+        <section class="institution-card">
+          <div class="section-heading">
+            <div><p class="eyebrow">INSTITUTIONAL FLOW</p><h2>外資與投信買賣張數</h2></div>
+            <button id="institutionSyncButton" class="button secondary" type="button">更新法人資料</button>
+          </div>
+          <div id="institutionSummary" class="institution-summary"></div>
+          <div id="institutionSyncMessage" class="inline-message" aria-live="polite"></div>
+          <div class="table-scroll"><table>
+            <thead><tr><th>日期</th><th>外資買進</th><th>外資賣出</th><th>外資買賣超</th><th>投信買進</th><th>投信賣出</th><th>投信買賣超</th></tr></thead>
+            <tbody id="institutionTable"><tr><td colspan="7">尚未取得法人資料</td></tr></tbody>
+          </table></div>
+          <p class="unit-note">單位：張。法人買賣超是交易流向，不是持股庫存，也不是總成交量的完整投資人身分拆分。</p>
+        </section>
+
+        <section>
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">TECHNICAL SNAPSHOT</p>
+              <h2>技術指標</h2>
+            </div>
+            <span id="analysisDate" class="muted"></span>
+          </div>
+          <div id="metricGrid" class="metric-grid"></div>
+        </section>
+
+        <section class="revenue-card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">MONTHLY REVENUE</p>
+              <h2>月營收趨勢</h2>
+            </div>
+            <span id="revenueDate" class="muted">尚未同步</span>
+          </div>
+          <div id="revenueMetricGrid" class="revenue-metrics"></div>
+          <div class="revenue-chart-wrap">
+            <canvas id="revenueChart" aria-label="每月營收長條圖"></canvas>
+            <div id="revenueChartEmpty" class="chart-empty">同步月營收後顯示趨勢</div>
+          </div>
+          <p class="unit-note">金額單位：新台幣億元；資料來源為公開資訊觀測站。</p>
+        </section>
+
+        <section class="valuation-card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">VALUATION RANGE</p>
+              <h2>歷史估值區間</h2>
+            </div>
+            <span id="valuationDate" class="muted">尚未同步</span>
+          </div>
+          <div id="valuationMetricGrid" class="valuation-metrics"></div>
+          <div class="chart-legend" aria-label="估值圖例">
+            <span><i class="pe-line"></i>本益比 PE</span>
+            <span><i class="pb-line"></i>股價淨值比 PB</span>
+          </div>
+          <div class="valuation-chart-wrap">
+            <canvas id="valuationChart" aria-label="歷史本益比與股價淨值比趨勢圖"></canvas>
+            <div id="valuationChartEmpty" class="chart-empty">同步估值資料後顯示趨勢</div>
+          </div>
+          <p class="unit-note">歷史分位為相對位置，不代表股價必然高估或低估。</p>
+        </section>
+
+        <section class="dividend-card">
+          <div class="section-heading">
+            <div><p class="eyebrow">DIVIDENDS</p><h2>股利與除權息日</h2></div>
+            <button id="dividendSyncButton" class="button secondary" type="button">更新股利資料</button>
+          </div>
+          <div id="dividendSummary" class="dividend-summary"></div>
+          <div id="dividendSyncMessage" class="inline-message" aria-live="polite"></div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>除權息日</th><th>類型</th><th>每股現金股利</th><th>無償配股率</th></tr></thead>
+              <tbody id="dividendTable"><tr><td colspan="4">尚未取得除權息資料</td></tr></tbody>
+            </table>
+          </div>
+          <p class="unit-note">除權息預告可能調整；請以證交所、櫃買中心及公司最新公告為準。</p>
+        </section>
+
+        <section class="ownership-card">
+          <div class="section-heading">
+            <div><p class="eyebrow">SHAREHOLDER STRUCTURE</p><h2>股權分散與籌碼結構</h2></div>
+            <button id="ownershipSyncButton" class="button secondary" type="button">更新股權分散</button>
+          </div>
+          <div id="ownershipSummary" class="ownership-summary"></div>
+          <div id="ownershipBar" class="ownership-bar" aria-label="持股級距占比"></div>
+          <div id="ownershipMeta" class="ownership-meta"></div>
+          <div id="ownershipSyncMessage" class="inline-message" aria-live="polite"></div>
+          <p class="ownership-warning">這是依帳戶持股張數估算的籌碼結構，不是股東身分名冊。大額持股不等於投信，也可能是大股東、其他法人或保管帳戶；投信買賣超只代表交易流向。</p>
+          <details class="ownership-details"><summary>查看完整持股級距</summary>
+            <div class="table-scroll"><table>
+              <thead><tr><th>持股級距</th><th>帳戶數</th><th>股數</th><th>占集保庫存</th></tr></thead>
+              <tbody id="ownershipTable"><tr><td colspan="4">尚未取得股權分散資料</td></tr></tbody>
+            </table></div>
+          </details>
+        </section>
+
+        <section class="financial-card">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">FINANCIAL QUALITY</p>
+              <h2>財務與獲利品質</h2>
+            </div>
+            <span id="financialPeriod" class="muted">尚未同步</span>
+          </div>
+          <div id="financialMetricGrid" class="financial-metrics"></div>
+          <div id="profitabilityNote" class="financial-note">同步最新財報後顯示獲利與財務結構。</div>
+          <p class="unit-note">ROE 為本期累計淨利依季別年化估算；金融業等特殊產業可能不適用部分比率。</p>
+        </section>
+
+        <section class="table-card">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">RECENT SESSIONS</p>
+              <h2>近期行情</h2>
+            </div>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>日期</th><th>開盤</th><th>最高</th><th>最低</th><th>收盤</th><th>成交量</th></tr></thead>
+              <tbody id="priceTable"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

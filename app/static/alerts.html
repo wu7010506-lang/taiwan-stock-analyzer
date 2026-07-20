@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="監控我的股票的重要技術、基本面、估值與籌碼訊號"><title>提醒中心｜台股研究台</title><link rel="stylesheet" href="/static/styles.css"></head>
+<body>
+<header class="topbar"><a class="brand" href="/recommendations/"><span class="brand-mark">TW</span><span>台股研究台</span></a><div class="top-actions"><a href="/alerts/" class="text-link nav-link active" aria-current="page">提醒中心</a><span id="apiStatus" class="status-dot"><i></i>服務連線中</span><a href="/watchlist/" class="text-link nav-link">我的股票</a><a href="/recommendations/" class="text-link nav-link">股票推薦</a><a href="/screener/" class="text-link nav-link">所有股票</a></div></header>
+<main class="shell">
+  <section class="intro"><div><p class="eyebrow">AUTOMATIC RESEARCH SIGNALS</p><h1>提醒中心</h1><p>自動檢查「我的股票」中的價格、營收、估值、法人與股利事件。</p></div><button id="reloadAlertsButton" class="button primary" type="button">重新檢查</button></section>
+  <section id="alertSummary" class="alert-summary"></section>
+  <section class="alert-toolbar" aria-label="提醒篩選">
+    <div class="alert-filter-chips"><button class="alert-filter-chip active" data-severity="all" type="button">全部</button><button class="alert-filter-chip warning" data-severity="warning" type="button">風險注意</button><button class="alert-filter-chip opportunity" data-severity="opportunity" type="button">研究機會</button><button class="alert-filter-chip" data-severity="info" type="button">事件資訊</button></div>
+    <div class="alert-filter-fields"><input id="alertSearch" type="search" placeholder="搜尋代號、名稱或提醒"><select id="alertCategory" aria-label="提醒類別"><option value="">全部類別</option></select><label class="unread-filter"><input id="unreadOnly" type="checkbox">只看未讀</label><button id="markAllRead" class="button secondary compact" type="button">全部標示已讀</button></div>
+  </section>
+  <div id="alertStatus" class="watchlist-summary">正在檢查提醒…</div>
+  <section id="alertGrid" class="alert-grid"></section>
+  <section id="alertEmpty" class="empty-state hidden"><h2 id="alertEmptyTitle">目前沒有觸發提醒</h2><p>調整篩選條件，或將股票加入「我的股票」並同步足夠的行情與基本面資料。</p><a href="/watchlist/" class="button primary button-link">前往我的股票</a></section>
+  <details class="research-notes"><summary>提醒規則與限制</summary><div><p>目前偵測 RSI 70/30、60 日均線突破、距已同步歷史高點 5%、月營收年增轉正或創高、PE 歷史 20/80 百分位、法人連續三日買賣超，以及未來 30 日除權息。</p><p class="warning-copy">提醒依資料庫內已同步資料計算，不代表即時盤中訊號或買賣建議。歷史資料不足時，相關規則不會觸發。</p></div></details>
+</main>
+<div id="toast" class="toast"></div><script src="/static/alerts.js"></script>
+</body></html>

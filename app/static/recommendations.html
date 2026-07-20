@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="以品質、成長與估值因子產生可解釋的台股研究候選名單">
+  <title>股票推薦｜台股研究台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/recommendations/" aria-label="台股研究台"><span class="brand-mark">TW</span><span>台股研究台</span></a>
+    <div class="top-actions">
+      <a href="/alerts/" class="text-link nav-link">提醒中心</a>
+      <span id="apiStatus" class="status-dot"><i></i>服務連線中</span>
+      <a href="/watchlist/" class="text-link nav-link">我的股票</a>
+      <a href="/recommendations/" class="text-link nav-link active" aria-current="page">股票推薦</a>
+      <a href="/screener/" class="text-link nav-link">所有股票</a>
+    </div>
+  </header>
+  <main class="shell">
+    <section class="intro recommendation-intro">
+      <div>
+        <p class="eyebrow">EXPLAINABLE FUNDAMENTAL RANKING</p>
+        <h1>股票推薦</h1>
+        <p>從品質、成長、估值與資料可信度，找出值得進一步研究的台股。</p>
+      </div>
+      <div class="intro-actions">
+        <label class="profile-select">判斷模式<select id="recommendationProfile"><option value="balanced">綜合多因子</option><option value="value">價值型</option><option value="growth">成長型</option><option value="quality">品質型</option></select></label>
+        <button id="refreshRecommendationButton" class="button primary" type="button">更新資料並重新評分</button>
+        <button id="reloadButton" class="button secondary" type="button">重新評分</button>
+      </div>
+    </section>
+
+    <section class="popular-panel">
+      <div class="section-heading">
+        <div><p class="eyebrow">MARKET ATTENTION</p><h2>熱門股票</h2></div>
+        <button id="refreshPopularButton" class="button secondary" type="button">更新熱門排行</button>
+      </div>
+      <p class="popular-description">依上市、上櫃公司最新交易日的成交金額排序，反映市場關注與流動性，不代表基本面推薦。</p>
+      <div id="popularStatus" class="watchlist-summary" aria-live="polite">載入熱門股票…</div>
+      <div id="popularGrid" class="popular-grid"></div>
+    </section>
+
+    <section class="method-card">
+      <div><strong id="methodTitle">綜合多因子</strong><span id="methodWeights">品質 40｜成長 25｜估值 25｜資料 10</span></div>
+      <p id="methodRule">分數是同一批台股間的相對排名，不是目標價或上漲機率。預設只納入基本面資料完整度至少 70% 的公司。</p>
+    </section>
+    <div id="recommendationStatus" class="watchlist-summary" aria-live="polite">載入推薦名單…</div>
+    <section id="recommendationGrid" class="recommendation-grid"></section>
+    <section id="recommendationEmpty" class="empty-state hidden">
+      <h2>目前沒有足夠資料可評分</h2>
+      <p>請按「更新資料並重新評分」建立最新營收、估值與財報資料集。</p>
+    </section>
+
+    <details class="research-notes">
+      <summary>評分方法、研究依據與限制</summary>
+      <div>
+        <p>新增三組摘要規則：價值型要求 EPS 為正、PE&lt;15、PB&lt;2、負債比≤70%；成長型要求 EPS 為正、營收年增≥20%、ROE&gt;0；品質型要求 EPS 為正、ROE≥10%、毛利率&gt;0、負債比≤60%。</p>
+        <p>ROE、毛利率、負債與估值會優先和同產業比較；同業有效樣本少於5檔時才退回全市場比較。這避免把不同產業的正常財務結構直接硬比。</p>
+        <p>方法參考 Piotroski 使用財報訊號區分公司品質，以及 Quality Minus Junk 對獲利、成長與安全性的架構。台股原始資料來自交易所與公開資訊觀測站。</p>
+        <p><a href="https://econpapers.repec.org/article/blajoares/v_3a38_3ay_3a2000_3ai_3a_3ap_3a1-41.htm" target="_blank" rel="noopener">Piotroski 原始研究</a> · <a href="https://www.aqr.com/-/media/AQR/Documents/Insights/Working-Papers/Quality-Minus-Junk.pdf" target="_blank" rel="noopener">Quality Minus Junk</a> · <a href="https://www.twse.com.tw/en/focus/investing.html" target="_blank" rel="noopener">臺灣證券交易所資料說明</a></p>
+        <p class="warning-copy">限制：目前資料庫尚未取得摘要提到的 CFO、FCF、PEG、市值與全市場完整價格動能，因此這些項目不計分；也未納入產業週期、公司治理、消息面與個人風險承受度。本頁是研究排序工具，不構成投資建議。</p>
+      </div>
+    </details>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/recommendations.js"></script>
+</body>
+</html>

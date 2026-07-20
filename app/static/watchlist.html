@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="集中追蹤想觀察的台灣股票">
+  <title>我的股票｜台股研究台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/recommendations/" aria-label="台股研究台"><span class="brand-mark">TW</span><span>台股研究台</span></a>
+    <div class="top-actions">
+      <a href="/alerts/" class="text-link nav-link">提醒中心</a>
+      <a href="/watchlist/" class="text-link nav-link active" aria-current="page">我的股票</a>
+      <span id="apiStatus" class="status-dot"><i></i>服務連線中</span>
+      <a href="/recommendations/" class="text-link nav-link">股票推薦</a>
+      <a href="/screener/" class="text-link nav-link">所有股票</a>
+      <a href="/docs" class="text-link utility-link">API 文件</a>
+    </div>
+  </header>
+  <main class="shell">
+    <section class="intro watchlist-intro">
+      <div>
+        <p class="eyebrow">MY STOCKS</p>
+        <h1>我的股票</h1>
+        <p>集中查看想持續觀察的股票，點選卡片即可進入完整分析。</p>
+      </div>
+      <a href="/recommendations/" class="button primary button-link">從推薦中挑選股票</a>
+    </section>
+    <div id="watchlistSummary" class="watchlist-summary">載入中…</div>
+    <section id="watchlistGrid" class="watchlist-grid" aria-live="polite"></section>
+    <section id="watchlistEmpty" class="empty-state hidden">
+      <div class="empty-graphic" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+      <h2>還沒有加入股票</h2>
+      <p>從股票推薦或所有股票點選個股，再加入我的股票。</p>
+      <a href="/screener/" class="button primary button-link">前往所有股票</a>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/watchlist.js"></script>
+</body>
+</html>

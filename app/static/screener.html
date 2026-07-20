@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="依營收、財務、估值與技術指標篩選台股">
+  <title>所有股票｜台股研究台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/recommendations/" aria-label="台股研究台">
+      <span class="brand-mark">TW</span><span>台股研究台</span>
+    </a>
+    <div class="top-actions">
+      <a href="/alerts/" class="text-link nav-link">提醒中心</a>
+      <span id="apiStatus" class="status-dot"><i></i>服務連線中</span>
+      <a href="/watchlist/" class="text-link nav-link">我的股票</a>
+      <a href="/recommendations/" class="text-link nav-link">股票推薦</a>
+      <a href="/screener/" class="text-link nav-link active" aria-current="page">所有股票</a>
+      <a href="/docs" class="text-link utility-link">API 文件</a>
+    </div>
+  </header>
+
+  <main class="shell">
+    <section class="intro screener-intro">
+      <div>
+        <p class="eyebrow">TAIWAN STOCK SCREENER</p>
+        <h1>從全市場，找到值得研究的股票。</h1>
+        <p>組合營收、獲利、估值與技術條件，快速縮小研究範圍。</p>
+      </div>
+      <button id="screenerSyncButton" class="button secondary" type="button">建立選股資料集</button>
+    </section>
+
+    <section class="screener-panel standalone-screener" aria-labelledby="filterTitle">
+      <div class="screener-body">
+        <div class="screener-toolbar">
+          <div><h2 id="filterTitle">篩選條件</h2><p>第一次使用請先建立資料集，之後可依需求更新。</p></div>
+          <span id="screenerMessage" class="muted" aria-live="polite"></span>
+        </div>
+        <div class="filter-grid">
+          <label>市場<select id="filterMarket"><option value="">全部</option><option value="TWSE">上市</option><option value="TPEx">上櫃</option></select></label>
+          <label>產業<input id="filterIndustry" type="text" placeholder="例如：24 或半導體"></label>
+          <label>營收 YoY 最低 (%)<input id="filterRevenueYoy" type="number" step="1" placeholder="例如 10"></label>
+          <label>毛利率最低 (%)<input id="filterGrossMargin" type="number" step="1" placeholder="例如 25"></label>
+          <label>年化 ROE 最低 (%)<input id="filterRoe" type="number" step="1" placeholder="例如 12"></label>
+          <label>負債比最高 (%)<input id="filterDebt" type="number" step="1" placeholder="例如 60"></label>
+          <label>本益比最高<input id="filterPe" type="number" step="1" placeholder="例如 25"></label>
+          <label>殖利率最低 (%)<input id="filterYield" type="number" step=".5" placeholder="例如 3"></label>
+          <label>RSI 最低<input id="filterRsiMin" type="number" min="0" max="100" placeholder="例如 40"></label>
+          <label>RSI 最高<input id="filterRsiMax" type="number" min="0" max="100" placeholder="例如 70"></label>
+          <label>季線條件<select id="filterSma"><option value="">不限</option><option value="true">股價高於季線</option><option value="false">股價低於季線</option></select></label>
+          <label>排序<select id="filterSort"><option value="completeness">資料完整度</option><option value="turnover">成交金額</option><option value="revenue_yoy">營收 YoY</option><option value="roe">年化 ROE</option><option value="pe">本益比</option><option value="dividend_yield">殖利率</option><option value="symbol">股票代號</option></select></label>
+        </div>
+        <label class="popular-filter"><input id="filterPopular" type="checkbox" checked><span><strong>只顯示熱門股票</strong><small>最近完整市場快照成交金額前 100 名，預設啟用</small></span></label>
+        <fieldset class="theme-filters">
+          <legend>題材分類（複選時符合任一項）</legend>
+          <label><input id="filterAiTheme" type="checkbox"><span><strong>AI 股</strong><small>AI 算力、伺服器、網通與關鍵晶片供應鏈</small></span></label>
+          <label><input id="filterDefenseTheme" type="checkbox"><span><strong>軍工／無人機股</strong><small>航太國防、造船、無人機與關鍵零組件</small></span></label>
+          <label><input id="filterIcDesignTheme" type="checkbox"><span><strong>IC 設計股</strong><small>主要業務包含積體電路設計</small></span></label>
+        </fieldset>
+        <div class="screener-actions">
+          <button id="runScreenerButton" class="button primary" type="button">開始選股</button>
+          <button id="resetScreenerButton" class="button secondary" type="button">清除全部條件</button>
+          <button id="exportScreenerButton" class="button secondary" type="button">匯出 CSV</button>
+        </div>
+        <p class="technical-warning">RSI 與季線需要個股至少 60 個交易日資料；建立資料集只同步最新全市場快照，不會逐檔下載歷史行情。</p>
+      </div>
+    </section>
+
+    <section class="table-card screener-table-card">
+      <div class="section-heading compact">
+        <div><p class="eyebrow">SCREENING RESULTS</p><h2>選股結果</h2></div>
+        <small class="muted">未設定條件時顯示完整清單；點選股票可查看完整分析</small>
+      </div>
+      <div class="table-scroll screener-results">
+        <table>
+          <thead><tr><th>股票</th><th>題材</th><th>熱門</th><th>成交金額</th><th>營收 YoY</th><th>ROE</th><th>PE</th><th>殖利率</th><th>完整度</th></tr></thead>
+          <tbody id="screenerTable"><tr><td colspan="9">設定條件後開始選股</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="/static/screener.js"></script>
+</body>
+</html>
