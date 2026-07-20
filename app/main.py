@@ -20,7 +20,7 @@ from app.ownership import analyze_ownership, sync_ownership
 from app.institutions import sync_institutional_trades
 from app.company import company_profile
 from app.alerts import build_alerts
-from app.market_seed import load_market_seed
+from app.market_seed import load_analysis_seed, load_market_seed
 from app.stock_score import score_stock
 from app.recommendations import recommend_stocks
 from app.screening import (
@@ -37,6 +37,7 @@ database = Database(settings.database_path)
 async def lifespan(_: FastAPI):
     database.initialize()
     load_market_seed(database)
+    load_analysis_seed(database)
     yield
 
 
