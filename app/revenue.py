@@ -59,7 +59,7 @@ def fetch_revenue_month(
         f"t21sc03_{roc_year}_{month}_0.html"
     )
     try:
-        response = client.get(url)
+        response = client.get(url, follow_redirects=True)
         if response.status_code == 404:
             return None
         response.raise_for_status()

@@ -48,7 +48,7 @@ class MarketProvider(ABC):
 
     def _get(self, url: str) -> list[dict[str, Any]]:
         try:
-            response = self.client.get(url)
+            response = self.client.get(url, follow_redirects=True)
             response.raise_for_status()
             payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -114,7 +114,7 @@ class TwseProvider(MarketProvider):
             f"?date={month:%Y%m}01&stockNo={symbol}&response=json"
         )
         try:
-            response = self.client.get(url)
+            response = self.client.get(url, follow_redirects=True)
             response.raise_for_status()
             payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -213,7 +213,7 @@ class TpexProvider(MarketProvider):
             f"?code={symbol}&date={month:%Y/%m}/01&response=json"
         )
         try:
-            response = self.client.get(url)
+            response = self.client.get(url, follow_redirects=True)
             response.raise_for_status()
             payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:

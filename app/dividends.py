@@ -48,11 +48,11 @@ def sync_dividends(database: Database, symbol: str) -> dict:
     headers = {"User-Agent": settings.user_agent, "Accept": "application/json"}
     with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers, follow_redirects=True) as client:
         if instrument["market"] == "TWSE":
-            payload = client.get("https://openapi.twse.com.tw/v1/exchangeReport/TWT48U_ALL")
+            payload = client.get("https://openapi.twse.com.tw/v1/exchangeReport/TWT48U_ALL", follow_redirects=True)
             payload.raise_for_status()
             rows = [_normalize_twse(row) for row in payload.json() if str(row.get("Code", "")).strip() == symbol]
         else:
-            payload = client.get("https://www.tpex.org.tw/openapi/v1/tpex_exright_prepost")
+            payload = client.get("https://www.tpex.org.tw/openapi/v1/tpex_exright_prepost", follow_redirects=True)
             payload.raise_for_status()
             rows = [_normalize_tpex(row) for row in payload.json() if str(row.get("SecuritiesCompanyCode", "")).strip() == symbol]
     return {"symbol": symbol, "rows_written": database.upsert_dividend_events(rows), "status": "completed"}

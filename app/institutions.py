@@ -58,11 +58,12 @@ def sync_institutional_trades(database: Database, symbol: str) -> dict:
     with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers, follow_redirects=True) as client:
         if instrument["market"] == "TWSE":
             response = client.get("https://www.twse.com.tw/rwd/zh/fund/T86",
-                                  params={"response": "json", "selectType": "ALLBUT0999"})
+                                  params={"response": "json", "selectType": "ALLBUT0999"},
+                                  follow_redirects=True)
             response.raise_for_status()
             row = normalize_twse(response.json(), symbol)
         else:
-            response = client.get("https://www.tpex.org.tw/openapi/v1/tpex_3insti_daily_trading")
+            response = client.get("https://www.tpex.org.tw/openapi/v1/tpex_3insti_daily_trading", follow_redirects=True)
             response.raise_for_status()
             source = next((item for item in response.json()
                            if str(item.get("SecuritiesCompanyCode", "")).strip() == symbol), None)

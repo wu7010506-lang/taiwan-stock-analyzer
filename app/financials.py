@@ -32,7 +32,7 @@ def _symbol(row: dict) -> str:
 
 def _fetch_rows(client: httpx.Client, url: str) -> list[dict]:
     try:
-        response = client.get(url)
+        response = client.get(url, follow_redirects=True)
         response.raise_for_status()
         payload = response.json()
     except (httpx.HTTPError, ValueError) as exc:

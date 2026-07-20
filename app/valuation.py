@@ -36,7 +36,7 @@ def fetch_valuation_date(
             f"?date={target:%Y/%m/%d}&cate=&response=json"
         )
     try:
-        response = client.get(url)
+        response = client.get(url, follow_redirects=True)
         response.raise_for_status()
         payload = response.json()
     except (httpx.HTTPError, ValueError) as exc:
