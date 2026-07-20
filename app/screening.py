@@ -149,7 +149,7 @@ def _sync_financials(database: Database, client: httpx.Client) -> int:
 
 def sync_screening_universe(database: Database) -> dict:
     headers = {"User-Agent": settings.user_agent, "Accept": "application/json"}
-    with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers) as client:
+    with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers, follow_redirects=True) as client:
         revenues = _sync_revenues(database, client)
         valuations = _sync_valuations(database, client)
         financials = _sync_financials(database, client)

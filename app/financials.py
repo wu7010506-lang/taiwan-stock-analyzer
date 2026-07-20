@@ -112,7 +112,7 @@ def sync_financials(database: Database, symbol: str) -> dict:
     if not instrument:
         raise LookupError("找不到股票代號；請先更新全市場清單")
     headers = {"User-Agent": settings.user_agent, "Accept": "application/json"}
-    with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers) as client:
+    with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers, follow_redirects=True) as client:
         row = fetch_latest_financials(client, symbol, instrument["market"])
     if not row:
         raise LookupError("官方資料中找不到這檔股票的最新財報")

@@ -55,7 +55,7 @@ def sync_institutional_trades(database: Database, symbol: str) -> dict:
     if not instrument:
         raise LookupError("找不到股票，請先同步上市、上櫃清單。")
     headers = {"User-Agent": settings.user_agent, "Accept": "application/json"}
-    with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers) as client:
+    with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers, follow_redirects=True) as client:
         if instrument["market"] == "TWSE":
             response = client.get("https://www.twse.com.tw/rwd/zh/fund/T86",
                                   params={"response": "json", "selectType": "ALLBUT0999"})

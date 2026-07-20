@@ -55,7 +55,7 @@ def _fetch_tdcc_rows() -> list[dict]:
     if _cache and now - _cache[0] < timedelta(hours=6):
         return _cache[1]
     headers = {"User-Agent": settings.user_agent, "Accept": "application/json"}
-    with httpx.Client(timeout=max(settings.http_timeout_seconds, 45), headers=headers) as client:
+    with httpx.Client(timeout=max(settings.http_timeout_seconds, 45), headers=headers, follow_redirects=True) as client:
         response = client.get(TDCC_URL)
         response.raise_for_status()
         rows = response.json()

@@ -10,7 +10,7 @@ from app.providers import TpexProvider, TwseProvider
 def sync_market_data(database: Database) -> dict[str, dict[str, int | str]]:
     result: dict[str, dict[str, int | str]] = {}
     headers = {"User-Agent": settings.user_agent, "Accept": "application/json"}
-    with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers) as client:
+    with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers, follow_redirects=True) as client:
         for provider in (TwseProvider(client), TpexProvider(client)):
             try:
                 instruments = provider.fetch_instruments()
@@ -50,7 +50,7 @@ def sync_history(database: Database, symbol: str, start: date, end: date) -> dic
     rows_written = 0
     completed = 0
     try:
-        with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers) as client:
+        with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers, follow_redirects=True) as client:
             provider = TwseProvider(client) if instrument["market"] == "TWSE" else TpexProvider(client)
             for month in months:
                 rows = [

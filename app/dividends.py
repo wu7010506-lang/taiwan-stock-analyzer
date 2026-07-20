@@ -46,7 +46,7 @@ def sync_dividends(database: Database, symbol: str) -> dict:
     if not instrument:
         raise LookupError("找不到股票代號；請先更新全市場清單")
     headers = {"User-Agent": settings.user_agent, "Accept": "application/json"}
-    with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers) as client:
+    with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers, follow_redirects=True) as client:
         if instrument["market"] == "TWSE":
             payload = client.get("https://openapi.twse.com.tw/v1/exchangeReport/TWT48U_ALL")
             payload.raise_for_status()

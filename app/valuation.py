@@ -95,7 +95,7 @@ def sync_valuations(database: Database, symbol: str, start: str, end: str) -> di
     written = 0
     missing = 0
     headers = {"User-Agent": settings.user_agent, "Accept": "application/json"}
-    with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers) as client:
+    with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers, follow_redirects=True) as client:
         for year, month in months:
             last_day = calendar.monthrange(year, month)[1]
             target = min(date(year, month, last_day), today)

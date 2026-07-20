@@ -115,7 +115,7 @@ def sync_revenue(database: Database, symbol: str, start: str, end: str) -> dict:
     written = 0
     missing = 0
     headers = {"User-Agent": settings.user_agent, "Accept": "text/html"}
-    with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers) as client:
+    with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers, follow_redirects=True) as client:
         for year, month in months:
             row = fetch_revenue_month(client, symbol, instrument["market"], year, month)
             if row:
