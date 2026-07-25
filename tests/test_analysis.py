@@ -42,5 +42,17 @@ def test_analysis_calculates_distance_from_historical_high():
     assert result["from_all_time_high"] == pytest.approx(-0.1)
 
 
+def test_analysis_ignores_zero_price_placeholders():
+    rows = [
+        {"symbol": "2330", "trade_date": "2026-01-01", "close": 0, "volume": 0},
+        {"symbol": "2330", "trade_date": "2026-01-02", "close": 100, "volume": 1000},
+        {"symbol": "2330", "trade_date": "2026-01-03", "close": 105, "volume": 1200},
+    ]
+    result = analyze(rows)
+    assert result["close"] == 105
+    assert result["all_time_high_close"] == 105
+    assert result["return_5d"] is None
+
+
 def test_parse_roc_compact_date():
     assert _parse_date("1150717").isoformat() == "2026-07-17"

@@ -1,5 +1,6 @@
 .env
 .venv/
+.server-packages/
 __pycache__/
 .pytest_cache/
 .pytest-tmp/
@@ -8,3 +9,4 @@ __pycache__/
 work/
 *.pyc
 data/*.db
+data/*.log

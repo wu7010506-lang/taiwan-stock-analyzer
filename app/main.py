@@ -15,12 +15,21 @@ from app.service import sync_history, sync_market_data
 from app.revenue import analyze_revenue, sync_revenue
 from app.valuation import analyze_valuations, sync_valuations
 from app.financials import analyze_financials, sync_financials
+from app.historical_fundamentals import sync_historical_fundamentals
+from app.fundamental_batch import run_fundamental_batch, run_price_history_batch
+from app.historical_valuation import get_historical_valuation
+from app.daily_sync import latest_daily_sync, run_daily_close_sync
+from app.performance import capture_recommendation_snapshots, model_performance
+from app.analysis_sync import analysis_sync_plan, sync_missing_analysis_data
+from app.backtest import historical_backtest
+from app.portfolio import PositionUpdate, portfolio_summary
 from app.dividends import sync_dividends
 from app.ownership import analyze_ownership, sync_ownership
 from app.institutions import sync_institutional_trades
 from app.company import company_profile
 from app.alerts import build_alerts
 from app.market_seed import load_analysis_seed, load_market_seed
+from app.market_context import get_market_context
 from app.stock_score import score_stock
 from app.recommendations import recommend_stocks
 from app.screening import (
@@ -71,19 +80,65 @@ def alerts_interface() -> FileResponse:
     return FileResponse(static_dir / "alerts.html")
 
 
+@app.get("/performance/", include_in_schema=False)
+def performance_interface() -> FileResponse:
+    return FileResponse(static_dir / "performance.html")
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
 @app.get("/alerts")
-def alerts() -> dict:
-    return build_alerts(database)
+def alerts(mode: Literal["short", "long"] = "short") -> dict:
+    try:
+        context = get_market_context()
+    except Exception:
+        context = {"market_score": 50, "regime": "資料暫缺", "events": []}
+    return build_alerts(database, mode, context)
 
 
 @app.post("/sync")
 def sync() -> dict:
     return sync_market_data(database)
+
+
+@app.post("/daily-sync")
+def daily_sync() -> dict:
+    return run_daily_close_sync(database)
+
+
+@app.get("/daily-sync/status")
+def daily_sync_status() -> dict:
+    return latest_daily_sync(database)
+
+
+@app.post("/performance/snapshot")
+def performance_snapshot() -> dict:
+    return capture_recommendation_snapshots(database, get_market_context())
+
+
+@app.get("/performance/summary")
+def performance_summary(
+    profile: Literal["evidence_based", "balanced"] = "evidence_based",
+    horizon: Literal[5, 20, 60, 120, 250] = 20,
+    min_score: float = Query(65, ge=0, le=100),
+) -> dict:
+    return model_performance(database, profile, horizon, min_score)
+
+
+@app.get("/performance/backtest")
+def performance_backtest(
+    horizon: Literal[5, 20, 60, 120, 250] = 20,
+    min_score: float = Query(65, ge=0, le=100),
+    top_n: int = Query(10, ge=1, le=50),
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict:
+    return historical_backtest(database, horizon, min_score, top_n,
+                               start_date.isoformat() if start_date else None,
+                               end_date.isoformat() if end_date else None)
 
 
 @app.get("/stocks")
@@ -97,6 +152,22 @@ def company(symbol: str) -> dict:
     if not instrument:
         raise HTTPException(404, "找不到公司基本資料，請先同步市場清單。")
     return company_profile(instrument)
+
+
+@app.get("/stocks/{symbol}/sync-plan")
+def stock_sync_plan(symbol: str) -> dict:
+    try:
+        return analysis_sync_plan(database, symbol)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@app.post("/stocks/{symbol}/sync-missing")
+def stock_sync_missing(symbol: str, force: bool = False) -> dict:
+    try:
+        return sync_missing_analysis_data(database, symbol, force)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 @app.get("/watchlist")
@@ -122,6 +193,18 @@ def watchlist_add(symbol: str) -> dict[str, str | bool]:
 def watchlist_remove(symbol: str) -> dict[str, str | bool]:
     database.remove_from_watchlist(symbol)
     return {"symbol": symbol, "watched": False}
+
+
+@app.put("/watchlist/{symbol}/position")
+def watchlist_position(symbol: str, position: PositionUpdate) -> dict:
+    if not database.update_watchlist_position(symbol, position.model_dump()):
+        raise HTTPException(404, "股票尚未加入我的股票")
+    return {"symbol": symbol, "status": "updated"}
+
+
+@app.get("/portfolio/summary")
+def get_portfolio_summary() -> dict:
+    return portfolio_summary(database)
 
 
 @app.get("/stocks/{symbol}/prices")
@@ -293,6 +376,58 @@ def financials(symbol: str, limit: int = Query(20, ge=1, le=40)) -> list[dict]:
     return database.get_financials(symbol, limit)
 
 
+@app.post("/financials/history/sync")
+def financial_history_sync(symbol: str, years: int = Query(5, ge=3, le=10)) -> dict:
+    try:
+        return sync_historical_fundamentals(database, symbol, years)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, f"Historical fundamentals sync failed: {exc}") from exc
+
+
+@app.get("/stocks/{symbol}/fundamentals/coverage")
+def fundamentals_coverage(symbol: str) -> dict:
+    if not database.get_instrument(symbol):
+        raise HTTPException(404, f"Stock {symbol} was not found")
+    return database.get_fundamentals_coverage(symbol)
+
+
+@app.post("/financials/history/batch")
+def financial_history_batch(
+    target_limit: int = Query(100, ge=10, le=200),
+    batch_size: int = Query(10, ge=1, le=10),
+    years: int = Query(5, ge=3, le=10), retry_failed: bool = False,
+) -> dict:
+    return run_fundamental_batch(database, target_limit, batch_size, years, retry_failed)
+
+
+@app.get("/financials/history/batch/status")
+def financial_history_batch_status(target_limit: int = Query(100, ge=10, le=200)) -> dict:
+    return database.get_fundamental_sync_progress(target_limit)
+
+
+@app.get("/stocks/{symbol}/valuation/history")
+def stock_historical_valuation(symbol: str, series_limit: int = Query(250, ge=20, le=1500)) -> dict:
+    result = get_historical_valuation(database, symbol, series_limit)
+    if not result:
+        raise HTTPException(404, "Historical valuation data is not yet available")
+    return result
+
+
+@app.post("/prices/history/batch")
+def price_history_batch(target_limit: int = Query(100, ge=10, le=200),
+                        batch_size: int = Query(10, ge=1, le=10),
+                        years: int = Query(3, ge=2, le=5),
+                        retry_failed: bool = False) -> dict:
+    return run_price_history_batch(database, target_limit, batch_size, years, retry_failed)
+
+
+@app.get("/prices/history/batch/status")
+def price_history_batch_status(target_limit: int = Query(100, ge=10, le=200)) -> dict:
+    return database.get_price_sync_progress(target_limit)
+
+
 @app.get("/stocks/{symbol}/financials/analysis")
 def financials_analysis(symbol: str) -> dict:
     result = analyze_financials(database.get_financials(symbol, 40))
@@ -329,9 +464,15 @@ def screener_export(filters: Annotated[ScreenerFilters, Query()]) -> Response:
 def recommendations(
     limit: int = Query(20, ge=1, le=100),
     min_completeness: int = Query(70, ge=0, le=100),
-    profile: Literal["balanced", "value", "growth", "quality"] = "balanced",
+    profile: Literal["balanced", "value", "growth", "quality", "long_term_quality",
+                     "evidence_based"] = "balanced",
 ) -> list[dict]:
     return recommend_stocks(database, limit, min_completeness, profile)
+
+
+@app.get("/market-context")
+def market_context(refresh: bool = False) -> dict:
+    return get_market_context(force=refresh)
 
 
 @app.get("/popular-stocks")

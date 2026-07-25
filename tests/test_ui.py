@@ -63,6 +63,10 @@ def test_watchlist_has_its_own_page():
     assert "/static/watchlist.js" in response.text
     assert script.status_code == 200
     assert 'api("/watchlist")' in script.text
+    assert 'id="positionDialog"' in response.text
+    assert 'id="portfolioSummary"' in response.text
+    assert '/portfolio/summary' in script.text
+    assert '/position`' in script.text
 
 
 def test_recommendations_have_their_own_explainable_page():
@@ -72,6 +76,7 @@ def test_recommendations_have_their_own_explainable_page():
     assert response.status_code == 200
     assert "價值型" in response.text
     assert "PE&lt;15" in response.text
+    assert "長期優質企業" in response.text
     assert "不構成投資建議" in response.text
     assert "/static/recommendations.js" in response.text
     assert script.status_code == 200
@@ -85,11 +90,9 @@ def test_ui_auto_syncs_one_year_when_stock_is_selected():
         response = client.get("/static/app.js")
     assert response.status_code == 200
     assert "autoSyncStockData(stock.symbol)" in response.text
-    assert 'setFullYear(startDate.getFullYear() - 1)' in response.text
-    assert 'api(`/history/sync?' in response.text
-    assert 'api(`/revenue/sync?' in response.text
-    assert 'api(`/valuation/sync?' in response.text
-    assert 'api(`/financials/sync?' in response.text
+    assert "/sync-plan" in response.text
+    assert "/sync-missing" in response.text
+    assert "if (plan.ready)" in response.text
 
 
 def test_individual_stock_page_has_candlestick_chart():
@@ -138,12 +141,47 @@ def test_alert_center_has_own_page():
     assert "提醒中心" in page.text
     assert 'id="alertGrid"' in page.text
     assert script.status_code == 200
-    assert 'api("/alerts")' in script.text
+    assert 'api(`/alerts?mode=${decisionMode}`)' in script.text
+    assert 'data-mode="short"' in page.text
+    assert 'data-mode="long"' in page.text
     assert 'id="alertSearch"' in page.text
     assert 'id="alertCategory"' in page.text
     assert 'id="unreadOnly"' in page.text
     assert 'id="markAllRead"' in page.text
     assert 'localStorage.setItem(READ_KEY' in script.text
+
+
+def test_global_sync_button_is_loaded_on_every_page():
+    with TestClient(app) as client:
+        pages = [client.get(path).text for path in
+                 ("/", "/watchlist/", "/recommendations/", "/screener/", "/alerts/")]
+        script = client.get("/static/global-sync.js")
+    assert all('/static/global-sync.js' in page for page in pages)
+    assert script.status_code == 200
+    assert 'button.textContent = "同步所有資料"' in script.text
+    assert 'fetch("/daily-sync", { method: "POST" })' in script.text
+
+
+def test_model_performance_has_own_page():
+    with TestClient(app) as client:
+        page = client.get("/performance/")
+        script = client.get("/static/performance.js")
+    assert page.status_code == 200
+    assert "模型成績" in page.text
+    assert 'id="performanceSummary"' in page.text
+    assert 'id="performanceRows"' in page.text
+    assert script.status_code == 200
+    assert "/performance/summary" in script.text
+    assert "/performance/snapshot" in script.text
+
+
+def test_model_performance_offers_historical_backtest():
+    with TestClient(app) as client:
+        page = client.get("/performance/")
+        script = client.get("/static/performance.js")
+    assert 'id="performanceMode"' in page.text
+    assert "歷史回測（立即評估）" in page.text
+    assert "/performance/backtest" in script.text
 
 
 def test_individual_stock_page_has_transparent_score():
