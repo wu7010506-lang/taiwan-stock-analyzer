@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="追蹤台股推薦模型的歷史勝率、報酬與回撤"><title>模型成績｜台股研究台</title><link rel="stylesheet" href="/static/styles.css"></head>
+<body>
+<header class="topbar"><a class="brand" href="/recommendations/"><span class="brand-mark">TW</span><span>台股研究台</span></a><div class="top-actions"><a href="/alerts/" class="text-link nav-link">提醒中心</a><span id="apiStatus" class="status-dot"><i></i>服務連線中</span><a href="/watchlist/" class="text-link nav-link">我的股票</a><a href="/recommendations/" class="text-link nav-link">股票推薦</a><a href="/screener/" class="text-link nav-link">所有股票</a><a href="/performance/" class="text-link nav-link active" aria-current="page">模型成績</a></div></header>
+<main class="shell">
+  <section class="intro"><div><p class="eyebrow">MODEL ACCOUNTABILITY</p><h1>模型成績</h1><p>保存每個交易日當下的推薦，不回頭修改歷史分數；等觀察期屆滿後，再計算實際報酬、勝率與最大回撤。</p></div><button id="captureSnapshotButton" class="button primary" type="button">保存今日推薦快照</button></section>
+  <section class="performance-controls">
+    <label>成績來源<select id="performanceMode"><option value="backtest">歷史回測（立即評估）</option><option value="live">每日正式快照</option></select></label>
+    <label>模型<select id="performanceProfile"><option value="evidence_based">研究型推薦</option><option value="balanced">綜合多因子</option></select></label>
+    <label>觀察期<select id="performanceHorizon"><option value="5">5 個交易日</option><option value="20" selected>20 個交易日</option><option value="60">60 個交易日</option><option value="120">120 個交易日</option><option value="250">250 個交易日</option></select></label>
+    <label>最低分數<input id="performanceMinScore" type="number" value="65" min="0" max="100" step="1"></label>
+    <label>每期前幾名<input id="performanceTopN" type="number" value="10" min="1" max="50" step="1"></label>
+    <button id="reloadPerformanceButton" class="button secondary" type="button">重新計算</button>
+  </section>
+  <section id="performanceSummary" class="performance-summary"></section>
+  <div id="performanceStatus" class="watchlist-summary">正在計算模型成績…</div>
+  <div id="performanceLimitations" class="watchlist-summary"></div>
+  <section class="table-card performance-table-card">
+    <div class="section-heading"><div><p class="eyebrow">HISTORICAL SIGNALS</p><h2>推薦觀察紀錄</h2></div></div>
+    <div class="table-scroll"><table><thead><tr><th>日期／股票</th><th>排名</th><th>分數</th><th>當時價格</th><th>期間報酬</th><th>超額報酬</th><th>最大回撤</th><th>狀態</th></tr></thead><tbody id="performanceRows"></tbody></table></div>
+  </section>
+  <details class="research-notes"><summary>績效計算方式與限制</summary><div><p>歷史回測每月底重新評分，只使用當時已公開的資料，選取分數達門檻的前 N 名，再觀察其後 5、20、60、120 或 250 個交易日。每日正式快照則保留真正當日線上模型輸出，兩者不混算。</p><p>期間報酬以評分日收盤價至第 N 個後續交易日收盤價計算；最大回撤是觀察期間內相對評分價格的最低跌幅。</p><p class="warning-copy">歷史回測是資料覆蓋範圍內的代理評估，不代表未來獲利；尚未包含交易成本、滑價、下市偏誤以及完整歷史大盤狀態。</p></div></details>
+</main>
+<div id="toast" class="toast"></div><script src="/static/performance.js"></script><script src="/static/global-sync.js"></script>
+</body></html>

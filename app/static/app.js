@@ -145,38 +145,29 @@ async function autoSyncStockData(symbol) {
   if (state.autoSyncedSymbols.has(symbol)) return;
   state.autoSyncedSymbols.add(symbol);
 
-  const endDate = new Date();
-  const startDate = new Date(endDate);
-  startDate.setFullYear(startDate.getFullYear() - 1);
-  const start = localDate(startDate);
-  const end = localDate(endDate);
-  const startMonth = start.slice(0, 7);
-  const endMonth = end.slice(0, 7);
   const messages = ["#syncMessage", "#revenueSyncMessage", "#valuationSyncMessage", "#financialSyncMessage", "#dividendSyncMessage", "#ownershipSyncMessage", "#institutionSyncMessage"];
-  messages.forEach(selector => $(selector).textContent = "選取股票後自動同步中…");
-  toast("正在自動更新近 1 年資料…");
-
-  const requests = [
-    api(`/history/sync?${new URLSearchParams({ symbol, start, end })}`, { method: "POST" }),
-    api(`/revenue/sync?${new URLSearchParams({ symbol, start: startMonth, end: endMonth })}`, { method: "POST" }),
-    api(`/valuation/sync?${new URLSearchParams({ symbol, start: startMonth, end: endMonth })}`, { method: "POST" }),
-    api(`/financials/sync?${new URLSearchParams({ symbol })}`, { method: "POST" }),
-    api(`/dividends/sync?${new URLSearchParams({ symbol })}`, { method: "POST" }),
-    api(`/ownership/sync?${new URLSearchParams({ symbol })}`, { method: "POST" }),
-    api(`/institutions/sync?${new URLSearchParams({ symbol })}`, { method: "POST" }),
-  ];
-  const results = await Promise.allSettled(requests);
   const labels = ["行情", "營收", "估值", "財報", "股利與除權息", "股權分散", "法人買賣"];
-  const succeeded = results.filter(result => result.status === "fulfilled").length;
-  results.forEach((result, index) => {
-    $(messages[index]).textContent = result.status === "fulfilled"
-      ? `自動同步完成（近 1 年${labels[index]}）`
-      : `自動同步未完成：${result.reason.message}`;
+  let plan;
+  try { plan = await api(`/stocks/${encodeURIComponent(symbol)}/sync-plan`); }
+  catch (error) { toast(error.message, true); return; }
+  if (plan.ready) {
+    messages.forEach((selector, index) => $(selector).textContent = `${labels[index]}資料已是最新，不需重複同步`);
+    return;
+  }
+  messages.forEach((selector, index) => $(selector).textContent = plan.missing.includes(["prices", "revenues", "valuations", "financials", "dividends", "ownership", "institutions"][index]) ? "資料缺少或過期，正在補齊…" : `${labels[index]}資料已是最新`);
+  toast(`正在補齊 ${plan.missing.map(name => ({prices:"行情",revenues:"營收",valuations:"估值",financials:"財報",dividends:"股利",ownership:"股權",institutions:"法人"})[name]).join("、")}…`);
+  let result;
+  try { result = await api(`/stocks/${encodeURIComponent(symbol)}/sync-missing`, { method: "POST" }); }
+  catch (error) { toast(error.message, true); return; }
+  const keys = ["prices", "revenues", "valuations", "financials", "dividends", "ownership", "institutions"];
+  keys.forEach((key, index) => {
+    const item = result.results[key];
+    $(messages[index]).textContent = !item ? `${labels[index]}資料已是最新` : item.status === "failed" ? `自動同步未完成：${item.error}` : `自動同步完成（${labels[index]}）`;
   });
   if (state.stock?.symbol !== symbol) return;
   await loadStock();
-  const failed = labels.length - succeeded;
-  toast(failed ? `自動更新完成 ${succeeded} 項，${failed} 項未完成` : "近 1 年資料已自動更新", failed > 0);
+  const failed = result.remaining.length;
+  toast(failed ? `資料已更新，但仍有 ${failed} 項缺漏` : "缺少的資料已補齊", failed > 0);
 }
 
 async function loadStock() {

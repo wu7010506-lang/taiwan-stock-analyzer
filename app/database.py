@@ -103,6 +103,16 @@ CREATE TABLE IF NOT EXISTS financial_snapshots (
     total_liabilities REAL,
     equity REAL,
     book_value_per_share REAL,
+    operating_cash_flow REAL,
+    capital_expenditure REAL,
+    free_cash_flow REAL,
+    cash_and_equivalents REAL,
+    inventory REAL,
+    property_plant_equipment REAL,
+    share_capital REAL,
+    interest_expense REAL,
+    statement_date TEXT,
+    source TEXT,
     fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (symbol, market, fiscal_year, fiscal_quarter)
 );
@@ -112,6 +122,13 @@ CREATE TABLE IF NOT EXISTS watchlist (
     symbol TEXT NOT NULL,
     market TEXT NOT NULL,
     added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    average_cost REAL,
+    shares INTEGER,
+    purchase_date TEXT,
+    stop_loss REAL,
+    target_price REAL,
+    investment_horizon TEXT,
+    notes TEXT,
     PRIMARY KEY (symbol, market),
     FOREIGN KEY (symbol, market) REFERENCES instruments(symbol, market)
 );
@@ -157,6 +174,73 @@ CREATE TABLE IF NOT EXISTS institutional_trades (
 );
 CREATE INDEX IF NOT EXISTS idx_institutional_trades_symbol_date
 ON institutional_trades(symbol, trade_date DESC);
+CREATE TABLE IF NOT EXISTS fundamental_sync_queue (
+    symbol TEXT NOT NULL,
+    market TEXT NOT NULL,
+    priority INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    years_requested INTEGER NOT NULL DEFAULT 5,
+    financial_rows INTEGER NOT NULL DEFAULT 0,
+    dividend_rows INTEGER NOT NULL DEFAULT 0,
+    price_status TEXT NOT NULL DEFAULT 'pending',
+    price_rows INTEGER NOT NULL DEFAULT 0,
+    price_error TEXT,
+    error TEXT,
+    started_at TEXT,
+    finished_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (symbol, market)
+);
+CREATE INDEX IF NOT EXISTS idx_fundamental_sync_queue_status
+ON fundamental_sync_queue(status, priority);
+CREATE TABLE IF NOT EXISTS daily_sync_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    status TEXT NOT NULL,
+    steps_json TEXT,
+    error TEXT,
+    started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    finished_at TEXT
+);
+CREATE TABLE IF NOT EXISTS market_index_snapshots (
+    trade_date TEXT PRIMARY KEY,
+    close REAL NOT NULL,
+    market_score REAL,
+    regime TEXT,
+    fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS recommendation_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    snapshot_date TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    market TEXT NOT NULL,
+    profile TEXT NOT NULL,
+    model_version TEXT NOT NULL,
+    rank INTEGER NOT NULL,
+    score REAL NOT NULL,
+    decision TEXT,
+    close REAL NOT NULL,
+    market_close REAL,
+    market_score REAL,
+    market_regime TEXT,
+    industry TEXT,
+    industry_category TEXT,
+    factors_json TEXT NOT NULL,
+    reasons_json TEXT NOT NULL,
+    risks_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(snapshot_date, symbol, market, profile)
+);
+CREATE INDEX IF NOT EXISTS idx_recommendation_snapshots_profile_date
+ON recommendation_snapshots(profile, snapshot_date DESC, rank);
+CREATE TABLE IF NOT EXISTS analysis_sync_state (
+    symbol TEXT NOT NULL,
+    dataset TEXT NOT NULL,
+    last_attempt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    status TEXT NOT NULL,
+    error TEXT,
+    PRIMARY KEY (symbol, dataset)
+);
 """
 
 
@@ -182,6 +266,47 @@ class Database:
             for name in ("website", "chairman", "established_date", "listed_date"):
                 if name not in columns:
                     connection.execute(f"ALTER TABLE instruments ADD COLUMN {name} TEXT")
+            financial_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(financial_snapshots)")
+            }
+            additions = {
+                "operating_cash_flow": "REAL", "capital_expenditure": "REAL",
+                "free_cash_flow": "REAL", "cash_and_equivalents": "REAL",
+                "inventory": "REAL", "property_plant_equipment": "REAL",
+                "share_capital": "REAL", "interest_expense": "REAL",
+                "statement_date": "TEXT", "source": "TEXT",
+            }
+            for name, sql_type in additions.items():
+                if name not in financial_columns:
+                    connection.execute(
+                        f"ALTER TABLE financial_snapshots ADD COLUMN {name} {sql_type}"
+                    )
+            connection.execute(
+                """UPDATE fundamental_sync_queue
+                   SET error='FinMind public API quota is temporarily exhausted; retry later'
+                   WHERE error LIKE '%402 Payment Required%'"""
+            )
+            queue_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(fundamental_sync_queue)")
+            }
+            for name, definition in {
+                "price_status": "TEXT NOT NULL DEFAULT 'pending'",
+                "price_rows": "INTEGER NOT NULL DEFAULT 0", "price_error": "TEXT",
+            }.items():
+                if name not in queue_columns:
+                    connection.execute(
+                        f"ALTER TABLE fundamental_sync_queue ADD COLUMN {name} {definition}"
+                    )
+            watchlist_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(watchlist)")
+            }
+            for name, definition in {
+                "average_cost": "REAL", "shares": "INTEGER", "purchase_date": "TEXT",
+                "stop_loss": "REAL", "target_price": "REAL",
+                "investment_horizon": "TEXT", "notes": "TEXT",
+            }.items():
+                if name not in watchlist_columns:
+                    connection.execute(f"ALTER TABLE watchlist ADD COLUMN {name} {definition}")
 
     def upsert_instruments(self, rows: list[Instrument]) -> int:
         with self.connect() as connection:
@@ -261,9 +386,13 @@ class Database:
 
     def list_watchlist(self) -> list[dict]:
         sql = """
-        SELECT w.symbol, w.market, w.added_at, i.name, i.industry,
+        SELECT w.symbol, w.market, w.added_at, w.average_cost, w.shares,
+               w.purchase_date, w.stop_loss, w.target_price, w.investment_horizon,
+               w.notes, i.name, i.industry,
                latest.trade_date, latest.close,
                previous.close AS previous_close,
+               (SELECT MAX(mp.trade_date) FROM daily_prices mp WHERE mp.close > 0)
+                 AS market_latest_date,
                (SELECT MAX(h.close) FROM daily_prices h
                 WHERE h.symbol=w.symbol AND h.market=w.market) AS all_time_high_close
         FROM watchlist w
@@ -282,8 +411,38 @@ class Database:
         for row in rows:
             close, previous, high = row["close"], row["previous_close"], row["all_time_high_close"]
             row["change_percent"] = close / previous - 1 if close and previous else None
+            row["quote_is_current"] = bool(
+                row["trade_date"] and row["market_latest_date"]
+                and row["trade_date"] >= row["market_latest_date"]
+            )
             row["from_all_time_high"] = close / high - 1 if close and high else None
+            shares = int(row["shares"] or 0)
+            cost = row["average_cost"]
+            row["is_held"] = bool(shares > 0 and cost and cost > 0)
+            row["cost_basis"] = float(cost) * shares if row["is_held"] else None
+            row["market_value"] = float(close) * shares if row["is_held"] and close else None
+            row["unrealized_profit"] = (row["market_value"] - row["cost_basis"]
+                                        if row["market_value"] is not None else None)
+            row["unrealized_return"] = (row["unrealized_profit"] / row["cost_basis"]
+                                        if row["unrealized_profit"] is not None
+                                        and row["cost_basis"] else None)
+            row["stop_triggered"] = bool(row["stop_loss"] and close
+                                         and float(close) <= float(row["stop_loss"]))
+            row["target_reached"] = bool(row["target_price"] and close
+                                         and float(close) >= float(row["target_price"]))
         return rows
+
+    def update_watchlist_position(self, symbol: str, row: dict) -> bool:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE watchlist SET average_cost=?, shares=?, purchase_date=?,
+                          stop_loss=?, target_price=?, investment_horizon=?, notes=?
+                   WHERE symbol=?""",
+                (row.get("average_cost"), row.get("shares"), row.get("purchase_date"),
+                 row.get("stop_loss"), row.get("target_price"),
+                 row.get("investment_horizon"), row.get("notes"), symbol),
+            )
+        return cursor.rowcount > 0
 
     def list_popular_stocks(self, limit: int = 12) -> list[dict]:
         """Rank listed companies by latest-session turnover, a transparent attention proxy."""
@@ -312,6 +471,192 @@ class Database:
         """
         with self.connect() as connection:
             return [dict(row) for row in connection.execute(sql, (limit,))]
+
+    def prepare_fundamental_sync_queue(self, rows: list[dict], years: int) -> int:
+        with self.connect() as connection:
+            connection.executemany(
+                """INSERT INTO fundamental_sync_queue
+                   (symbol, market, priority, years_requested) VALUES (?, ?, ?, ?)
+                   ON CONFLICT(symbol, market) DO UPDATE SET
+                     priority=excluded.priority, years_requested=excluded.years_requested,
+                     updated_at=CURRENT_TIMESTAMP""",
+                [(row["symbol"], row["market"], index, years)
+                for index, row in enumerate(rows, 1)],
+            )
+            connection.execute(
+                """UPDATE fundamental_sync_queue AS q
+                   SET status='completed',
+                       financial_rows=(SELECT COUNT(*) FROM financial_snapshots f
+                                       WHERE f.symbol=q.symbol AND f.market=q.market
+                                         AND f.statement_date IS NOT NULL),
+                       dividend_rows=(SELECT COUNT(*) FROM dividend_events d
+                                      WHERE d.symbol=q.symbol AND d.market=q.market),
+                       updated_at=CURRENT_TIMESTAMP
+                   WHERE status='pending'
+                     AND (SELECT COUNT(DISTINCT f.fiscal_year)
+                          FROM financial_snapshots f
+                          WHERE f.symbol=q.symbol AND f.market=q.market
+                            AND f.statement_date IS NOT NULL) >= 5
+                     AND (SELECT COUNT(*) FROM financial_snapshots f
+                          WHERE f.symbol=q.symbol AND f.market=q.market
+                            AND f.operating_cash_flow IS NOT NULL) >= 12"""
+            )
+        return len(rows)
+
+    def reset_failed_fundamental_syncs(self) -> int:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE fundamental_sync_queue SET status='pending', error=NULL,
+                          updated_at=CURRENT_TIMESTAMP WHERE status='failed'"""
+            )
+        return cursor.rowcount
+
+    def claim_fundamental_sync_batch(self, limit: int) -> list[dict]:
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE fundamental_sync_queue SET status='pending'
+                   WHERE status='running'
+                     AND datetime(updated_at) < datetime('now', '-30 minutes')"""
+            )
+            rows = [dict(row) for row in connection.execute(
+                """SELECT * FROM fundamental_sync_queue WHERE status='pending'
+                   ORDER BY priority LIMIT ?""", (limit,)
+            )]
+            connection.executemany(
+                """UPDATE fundamental_sync_queue SET status='running', attempts=attempts+1,
+                          started_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP
+                   WHERE symbol=? AND market=?""",
+                [(row["symbol"], row["market"]) for row in rows],
+            )
+        return rows
+
+    def finish_fundamental_sync(self, symbol: str, market: str, result: dict | None = None,
+                                error: str | None = None) -> None:
+        result = result or {}
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE fundamental_sync_queue SET status=?, financial_rows=?,
+                          dividend_rows=?, error=?, finished_at=CURRENT_TIMESTAMP,
+                          updated_at=CURRENT_TIMESTAMP WHERE symbol=? AND market=?""",
+                ("failed" if error else "completed", result.get("financial_rows_written", 0),
+                 result.get("dividend_rows_written", 0), error, symbol, market),
+            )
+
+    def get_fundamental_sync_progress(self, target_limit: int | None = None) -> dict:
+        condition = "WHERE priority <= ?" if target_limit else ""
+        params = (target_limit,) if target_limit else ()
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"SELECT status, COUNT(*) AS count FROM fundamental_sync_queue {condition} GROUP BY status",
+                params,
+            ).fetchall()
+            failure_where = condition + (" AND" if condition else "WHERE")
+            failures = [dict(row) for row in connection.execute(
+                f"""SELECT symbol, market, error, attempts FROM fundamental_sync_queue
+                    {failure_where} status='failed' ORDER BY priority LIMIT 10""", params
+            )]
+        counts = {row["status"]: row["count"] for row in rows}
+        total = sum(counts.values())
+        completed = counts.get("completed", 0)
+        return {"total": total, "pending": counts.get("pending", 0),
+                "running": counts.get("running", 0), "completed": completed,
+                "failed": counts.get("failed", 0),
+                "completion_percent": round(completed / total * 100, 1) if total else 0,
+                "failures": failures}
+
+    def prepare_price_sync_queue(self, rows: list[dict]) -> int:
+        self.prepare_fundamental_sync_queue(rows, 5)
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE fundamental_sync_queue AS q SET price_status='completed',
+                          price_rows=(SELECT COUNT(*) FROM daily_prices p
+                                      WHERE p.symbol=q.symbol AND p.market=q.market),
+                          price_error=NULL, updated_at=CURRENT_TIMESTAMP
+                   WHERE price_status!='completed'
+                     AND (SELECT COUNT(*) FROM daily_prices p
+                          WHERE p.symbol=q.symbol AND p.market=q.market) >= 500"""
+            )
+        return len(rows)
+
+    def reset_failed_price_syncs(self) -> int:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE fundamental_sync_queue SET price_status='pending', price_error=NULL,
+                          updated_at=CURRENT_TIMESTAMP WHERE price_status='failed'"""
+            )
+        return cursor.rowcount
+
+    def claim_price_sync_batch(self, limit: int) -> list[dict]:
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE fundamental_sync_queue SET price_status='pending'
+                   WHERE price_status='running'
+                     AND datetime(updated_at) < datetime('now', '-30 minutes')"""
+            )
+            rows = [dict(row) for row in connection.execute(
+                """SELECT * FROM fundamental_sync_queue WHERE price_status='pending'
+                   ORDER BY priority LIMIT ?""", (limit,)
+            )]
+            connection.executemany(
+                """UPDATE fundamental_sync_queue SET price_status='running',
+                          updated_at=CURRENT_TIMESTAMP WHERE symbol=? AND market=?""",
+                [(row["symbol"], row["market"]) for row in rows],
+            )
+        return rows
+
+    def finish_price_sync(self, symbol: str, market: str, rows: int = 0,
+                          error: str | None = None) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE fundamental_sync_queue SET price_status=?, price_rows=?,
+                          price_error=?, updated_at=CURRENT_TIMESTAMP
+                   WHERE symbol=? AND market=?""",
+                ("failed" if error else "completed", rows, error, symbol, market),
+            )
+
+    def get_price_sync_progress(self, target_limit: int = 100) -> dict:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT price_status AS status, COUNT(*) AS count
+                   FROM fundamental_sync_queue WHERE priority <= ? GROUP BY price_status""",
+                (target_limit,),
+            ).fetchall()
+            failures = [dict(row) for row in connection.execute(
+                """SELECT symbol, market, price_error AS error FROM fundamental_sync_queue
+                   WHERE priority <= ? AND price_status='failed'
+                   ORDER BY priority LIMIT 10""", (target_limit,)
+            )]
+        counts = {row["status"]: row["count"] for row in rows}
+        total = sum(counts.values())
+        completed = counts.get("completed", 0)
+        return {"total": total, "pending": counts.get("pending", 0),
+                "running": counts.get("running", 0), "completed": completed,
+                "failed": counts.get("failed", 0),
+                "completion_percent": round(completed / total * 100, 1) if total else 0,
+                "failures": failures}
+
+    def create_daily_sync_run(self) -> int:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "INSERT INTO daily_sync_runs(status) VALUES('running')"
+            )
+        return int(cursor.lastrowid)
+
+    def finish_daily_sync_run(self, run_id: int, status: str, steps_json: str,
+                              error: str | None = None) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE daily_sync_runs SET status=?, steps_json=?, error=?,
+                          finished_at=CURRENT_TIMESTAMP WHERE id=?""",
+                (status, steps_json, error, run_id),
+            )
+
+    def get_latest_daily_sync_run(self) -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM daily_sync_runs ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+        return dict(row) if row else None
 
     def upsert_dividend_events(self, rows: list[dict]) -> int:
         with self.connect() as connection:
@@ -530,6 +875,9 @@ class Database:
             "revenue", "gross_profit", "operating_income", "net_income", "eps",
             "current_assets", "total_assets", "current_liabilities", "total_liabilities",
             "equity", "book_value_per_share",
+            "operating_cash_flow", "capital_expenditure", "free_cash_flow",
+            "cash_and_equivalents", "inventory", "property_plant_equipment",
+            "share_capital", "interest_expense", "statement_date", "source",
         )
         values = []
         for key in columns:
@@ -541,8 +889,12 @@ class Database:
                 (symbol, market, fiscal_year, fiscal_quarter, report_type, revenue,
                  gross_profit, operating_income, net_income, eps, current_assets,
                  total_assets, current_liabilities, total_liabilities, equity,
-                 book_value_per_share)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 book_value_per_share, operating_cash_flow, capital_expenditure,
+                 free_cash_flow, cash_and_equivalents, inventory,
+                 property_plant_equipment, share_capital, interest_expense,
+                 statement_date, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, market, fiscal_year, fiscal_quarter) DO UPDATE SET
                 report_type=excluded.report_type, revenue=excluded.revenue,
                 gross_profit=excluded.gross_profit, operating_income=excluded.operating_income,
@@ -551,6 +903,16 @@ class Database:
                 current_liabilities=excluded.current_liabilities,
                 total_liabilities=excluded.total_liabilities, equity=excluded.equity,
                 book_value_per_share=excluded.book_value_per_share,
+                operating_cash_flow=COALESCE(excluded.operating_cash_flow, operating_cash_flow),
+                capital_expenditure=COALESCE(excluded.capital_expenditure, capital_expenditure),
+                free_cash_flow=COALESCE(excluded.free_cash_flow, free_cash_flow),
+                cash_and_equivalents=COALESCE(excluded.cash_and_equivalents, cash_and_equivalents),
+                inventory=COALESCE(excluded.inventory, inventory),
+                property_plant_equipment=COALESCE(excluded.property_plant_equipment, property_plant_equipment),
+                share_capital=COALESCE(excluded.share_capital, share_capital),
+                interest_expense=COALESCE(excluded.interest_expense, interest_expense),
+                statement_date=COALESCE(excluded.statement_date, statement_date),
+                source=COALESCE(excluded.source, source),
                 fetched_at=CURRENT_TIMESTAMP""",
                 values,
             )
@@ -563,6 +925,35 @@ class Database:
                 (symbol, limit),
             ).fetchall()
         return [dict(row) for row in reversed(rows)]
+
+    def get_fundamentals_coverage(self, symbol: str) -> dict:
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT COUNT(*) AS financial_periods,
+                          COUNT(DISTINCT fiscal_year) AS financial_years,
+                          SUM(CASE WHEN operating_cash_flow IS NOT NULL THEN 1 ELSE 0 END)
+                            AS cash_flow_periods,
+                          SUM(CASE WHEN free_cash_flow IS NOT NULL THEN 1 ELSE 0 END)
+                            AS free_cash_flow_periods,
+                          MIN(statement_date) AS first_statement_date,
+                          MAX(statement_date) AS latest_statement_date
+                   FROM financial_snapshots WHERE symbol=?""", (symbol,)
+            ).fetchone()
+            dividend = connection.execute(
+                """SELECT COUNT(*) AS dividend_events,
+                          COUNT(DISTINCT substr(ex_date,1,4)) AS dividend_years,
+                          MIN(ex_date) AS first_dividend_date,
+                          MAX(ex_date) AS latest_dividend_date
+                   FROM dividend_events WHERE symbol=? AND cash_dividend > 0""", (symbol,)
+            ).fetchone()
+        result = {"symbol": symbol, **dict(row), **dict(dividend)}
+        periods = result["financial_periods"] or 0
+        result["quality_ready"] = bool(
+            (result["financial_years"] or 0) >= 5
+            and (result["cash_flow_periods"] or 0) >= min(periods, 12)
+            and (result["dividend_years"] or 0) >= 3
+        )
+        return result
 
     def get_screening_universe(
         self, market: str | None = None, industry: str | None = None
@@ -579,12 +970,62 @@ class Database:
         sql = f"""
         SELECT i.symbol, i.market, i.name, i.industry,
                p.close, p.volume, p.turnover, p.trade_date,
-               r.yoy_percent,
+               (SELECT p3.close FROM daily_prices p3
+                WHERE p3.symbol=i.symbol AND p3.market=i.market
+                ORDER BY p3.trade_date DESC LIMIT 1 OFFSET 4) AS close_5d_ago,
+               (SELECT AVG(p4.close) FROM (
+                  SELECT close FROM daily_prices
+                  WHERE symbol=i.symbol AND market=i.market
+                  ORDER BY trade_date DESC LIMIT 20
+                ) p4) AS ma20,
+               (SELECT MAX(p5.close) FROM daily_prices p5
+                WHERE p5.symbol=i.symbol AND p5.market=i.market
+                  AND p5.trade_date >= date(p.trade_date, '-365 day')) AS high_52w,
+               r.yoy_percent, r.cumulative_yoy_percent AS annual_revenue_yoy,
                v.pe_ratio, v.pb_ratio, v.dividend_yield,
+               (SELECT it.foreign_net FROM institutional_trades it
+                WHERE it.symbol=i.symbol AND it.market=i.market
+                ORDER BY it.trade_date DESC LIMIT 1) AS foreign_net,
+               (SELECT it.trust_net FROM institutional_trades it
+                WHERE it.symbol=i.symbol AND it.market=i.market
+                ORDER BY it.trade_date DESC LIMIT 1) AS trust_net,
+               (SELECT SUM(x.foreign_net) FROM (
+                  SELECT foreign_net FROM institutional_trades
+                  WHERE symbol=i.symbol AND market=i.market
+                  ORDER BY trade_date DESC LIMIT 5
+                ) x) AS foreign_net_5d,
+               (SELECT SUM(x.trust_net) FROM (
+                  SELECT trust_net FROM institutional_trades
+                  WHERE symbol=i.symbol AND market=i.market
+                  ORDER BY trade_date DESC LIMIT 5
+                ) x) AS trust_net_5d,
+               (SELECT SUM(x.volume) FROM (
+                  SELECT volume FROM daily_prices
+                  WHERE symbol=i.symbol AND market=i.market
+                  ORDER BY trade_date DESC LIMIT 5
+                ) x) AS volume_5d,
+               CASE WHEN (SELECT AVG(x.turnover) FROM (
+                    SELECT turnover FROM daily_prices
+                    WHERE symbol=i.symbol AND market=i.market
+                    ORDER BY trade_date DESC LIMIT 20
+                  ) x) > 0 THEN p.turnover / (SELECT AVG(x.turnover) FROM (
+                    SELECT turnover FROM daily_prices
+                    WHERE symbol=i.symbol AND market=i.market
+                    ORDER BY trade_date DESC LIMIT 20
+                  ) x) END AS turnover_ratio_20d,
                f.fiscal_year, f.fiscal_quarter, f.report_type, f.revenue,
                f.gross_profit, f.operating_income, f.net_income, f.eps,
                f.current_assets, f.total_assets, f.current_liabilities,
                f.total_liabilities, f.equity, f.book_value_per_share
+               ,(SELECT COUNT(*) FROM financial_snapshots fh
+                 WHERE fh.symbol=i.symbol AND fh.market=i.market) AS financial_periods_count
+               ,(SELECT COUNT(*) FROM financial_snapshots fh
+                 WHERE fh.symbol=i.symbol AND fh.market=i.market AND fh.eps > 0) AS positive_eps_periods
+               ,(SELECT COUNT(DISTINCT fh.fiscal_year) FROM financial_snapshots fh
+                 WHERE fh.symbol=i.symbol AND fh.market=i.market AND fh.net_income > 0) AS profitable_years
+               ,(SELECT COUNT(DISTINCT substr(d.ex_date,1,4)) FROM dividend_events d
+                 WHERE d.symbol=i.symbol AND d.market=i.market
+                   AND d.cash_dividend > 0) AS dividend_years
         FROM instruments i
         LEFT JOIN daily_prices p ON p.symbol=i.symbol AND p.market=i.market
           AND p.trade_date=(SELECT MAX(p2.trade_date) FROM daily_prices p2
