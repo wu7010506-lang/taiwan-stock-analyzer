@@ -31,3 +31,20 @@ def test_portfolio_calculates_profit_and_risk_flags(tmp_path: Path):
 def test_position_requires_cost_when_shares_are_held():
     with pytest.raises(ValueError):
         PositionUpdate(shares=1000)
+
+
+def test_portfolio_marks_a_stop_loss_position_for_sale(tmp_path: Path):
+    database = Database(tmp_path / "stocks.db")
+    database.initialize()
+    database.upsert_instruments([Instrument("2330", "台積電", "TWSE", "24")])
+    database.add_to_watchlist("2330", "TWSE")
+    database.upsert_prices([DailyPrice("2330", "TWSE", date(2026, 7, 22),
+        Decimal(88), Decimal(89), Decimal(79), Decimal(80), 1000)])
+    database.update_watchlist_position("2330", {
+        "average_cost": 100, "shares": 1000, "stop_loss": 90,
+        "investment_horizon": "long",
+    })
+
+    result = portfolio_summary(database)
+
+    assert result["positions"][0]["portfolio_decision"]["action"] == "sell"

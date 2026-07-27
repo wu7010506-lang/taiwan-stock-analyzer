@@ -22,6 +22,7 @@ from app.daily_sync import latest_daily_sync, run_daily_close_sync
 from app.performance import capture_recommendation_snapshots, model_performance
 from app.analysis_sync import analysis_sync_plan, sync_missing_analysis_data
 from app.backtest import historical_backtest
+from app.strategy_backtest import strategy_walk_forward_backtest
 from app.portfolio import PositionUpdate, portfolio_summary
 from app.dividends import sync_dividends
 from app.ownership import analyze_ownership, sync_ownership
@@ -32,6 +33,7 @@ from app.market_seed import load_analysis_seed, load_market_seed
 from app.market_context import get_market_context
 from app.stock_score import score_stock
 from app.recommendations import recommend_stocks
+from app.vnext_model import evaluate_vnext_stock, recommend_vnext_stocks
 from app.screening import (
     ScreenerFilters,
     screen_stocks,
@@ -141,6 +143,18 @@ def performance_backtest(
                                end_date.isoformat() if end_date else None)
 
 
+@app.get("/performance/strategy-backtest")
+def performance_strategy_backtest(
+    min_score: float = Query(65, ge=0, le=100),
+    top_n: int = Query(10, ge=1, le=50),
+    commission_bps: float = Query(14.25, ge=0, le=100),
+    sell_tax_bps: float = Query(30, ge=0, le=100),
+) -> dict:
+    return strategy_walk_forward_backtest(
+        database, min_score, top_n, commission_bps, sell_tax_bps
+    )
+
+
 @app.get("/stocks")
 def stocks(q: str | None = None, limit: int = Query(100, ge=1, le=1000)) -> list[dict]:
     return database.list_instruments(q, limit)
@@ -204,7 +218,11 @@ def watchlist_position(symbol: str, position: PositionUpdate) -> dict:
 
 @app.get("/portfolio/summary")
 def get_portfolio_summary() -> dict:
-    return portfolio_summary(database)
+    try:
+        context = get_market_context()
+    except Exception:
+        context = {"market_score": 50, "overheat_score": 0, "regime": "unknown"}
+    return portfolio_summary(database, context)
 
 
 @app.get("/stocks/{symbol}/prices")
@@ -242,6 +260,17 @@ def stock_score(symbol: str) -> dict:
     if not result:
         raise HTTPException(404, "找不到股票評分資料。")
     return result
+
+
+@app.get("/stocks/{symbol}/vnext")
+def stock_vnext(symbol: str, as_of: date | None = None) -> dict:
+    if not database.get_instrument(symbol):
+        raise HTTPException(404, f"Stock {symbol} was not found")
+    try:
+        context = get_market_context()
+    except Exception:
+        context = {"market_score": 50, "overheat_score": 0, "regime": "unknown"}
+    return evaluate_vnext_stock(database, symbol, as_of or date.today(), context)
 
 
 @app.post("/dividends/sync")
@@ -468,6 +497,18 @@ def recommendations(
                      "evidence_based"] = "balanced",
 ) -> list[dict]:
     return recommend_stocks(database, limit, min_completeness, profile)
+
+
+@app.get("/recommendations/vnext")
+def vnext_recommendations(
+    limit: int = Query(20, ge=1, le=100),
+    as_of: date | None = None,
+) -> dict:
+    try:
+        context = get_market_context()
+    except Exception:
+        context = {"market_score": 50, "overheat_score": 0, "regime": "unknown"}
+    return recommend_vnext_stocks(database, as_of or date.today(), context, limit)
 
 
 @app.get("/market-context")

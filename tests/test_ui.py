@@ -67,6 +67,9 @@ def test_watchlist_has_its_own_page():
     assert 'id="portfolioSummary"' in response.text
     assert '/portfolio/summary' in script.text
     assert '/position`' in script.text
+    assert "portfolio_decision" in script.text
+    assert "position-decision" in script.text
+    assert "(portfolio.watching_decisions || [])" in script.text
 
 
 def test_recommendations_have_their_own_explainable_page():
@@ -199,3 +202,12 @@ def test_other_pages_do_not_link_directly_to_individual_analysis():
         pages = [client.get(path).text for path in ("/screener/", "/watchlist/", "/recommendations/", "/alerts/")]
     assert all('href="/"' not in page for page in pages)
     assert all('>個股分析</a>' not in page for page in pages)
+
+
+def test_vnext_is_exposed_as_separate_api_without_replacing_existing_model():
+    with TestClient(app) as client:
+        schema = client.get("/openapi.json").json()
+
+    assert "/stocks/{symbol}/vnext" in schema["paths"]
+    assert "/recommendations/vnext" in schema["paths"]
+    assert "/recommendations" in schema["paths"]
