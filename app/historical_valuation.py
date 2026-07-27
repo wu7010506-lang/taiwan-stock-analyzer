@@ -57,8 +57,13 @@ def build_symbol_valuation_history(financials: list[dict], prices: list[dict]) -
                    else None)
         share_capital = row.get("share_capital")
         shares = float(share_capital) / 10 if share_capital and share_capital > 0 else None
-        bvps = (float(row["equity"]) / shares
-                if shares and row.get("equity") is not None else row.get("book_value_per_share"))
+        # Prefer the source's reported per-share figure.  Balance-sheet values
+        # are not consistently expressed in the same unit across providers,
+        # while book_value_per_share is already unit-safe.
+        bvps = row.get("book_value_per_share")
+        if bvps is None and shares and row.get("equity") is not None:
+            bvps = float(row["equity"]) / shares
+        bvps = float(bvps) if bvps is not None else None
         statement_date = date.fromisoformat(row["statement_date"])
         lag = 90 if key[1] == 4 else 45
         statements.append({"available_date": statement_date + timedelta(days=lag),

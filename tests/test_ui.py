@@ -86,6 +86,8 @@ def test_recommendations_have_their_own_explainable_page():
     assert "profile=${profile}" in script.text
     assert 'id="popularGrid"' in response.text
     assert 'api("/popular-stocks?limit=12")' in script.text
+    assert 'value="vnext"' in response.text
+    assert '"/recommendations/vnext?limit=24"' in script.text
 
 
 def test_ui_auto_syncs_one_year_when_stock_is_selected():
@@ -154,7 +156,23 @@ def test_alert_center_has_own_page():
     assert 'localStorage.setItem(READ_KEY' in script.text
 
 
-def test_global_sync_button_is_loaded_on_every_page():
+def _legacy_global_sync_button_markup_check():
+    with TestClient(app) as client:
+        pages = [client.get(path).text for path in
+                 ("/", "/watchlist/", "/recommendations/", "/screener/", "/alerts/")]
+        script = client.get("/static/global-sync.js")
+    assert all('/static/global-sync.js' in page for page in pages)
+    assert script.status_code == 200
+    assert 'button.textContent = "同步所有資料"' in script.text
+    assert "data_freshness" in script.text
+    return
+    assert 'button.textContent = "同步所有資料"' in script.text
+    assert 'button.textContent = "同步所有資料"' in script.text
+    assert 'fetch("/daily-sync", { method: "POST" })' in script.text
+    assert "data_freshness" in script.text
+
+
+def test_global_sync_reports_per_market_data_coverage():
     with TestClient(app) as client:
         pages = [client.get(path).text for path in
                  ("/", "/watchlist/", "/recommendations/", "/screener/", "/alerts/")]
@@ -163,6 +181,8 @@ def test_global_sync_button_is_loaded_on_every_page():
     assert script.status_code == 200
     assert 'button.textContent = "同步所有資料"' in script.text
     assert 'fetch("/daily-sync", { method: "POST" })' in script.text
+    assert "data_freshness" in script.text
+    assert 'qualityLink.href = "/data-quality/"' in script.text
 
 
 def test_model_performance_has_own_page():
@@ -183,8 +203,42 @@ def test_model_performance_offers_historical_backtest():
         page = client.get("/performance/")
         script = client.get("/static/performance.js")
     assert 'id="performanceMode"' in page.text
-    assert "歷史回測（立即評估）" in page.text
+    assert "歷史選股回測" in page.text
     assert "/performance/backtest" in script.text
+
+
+def test_model_performance_offers_market_strategy_walk_forward_backtest():
+    with TestClient(app) as client:
+        page = client.get("/performance/")
+        script = client.get("/static/performance.js")
+        response = client.get("/performance/strategy-backtest")
+
+    assert page.status_code == 200
+    assert "市場策略 Walk-forward 回測" in page.text
+    assert script.status_code == 200
+    assert "/performance/strategy-backtest" in script.text
+    assert "renderStrategy" in script.text
+    assert response.status_code == 200
+    assert response.json()["mode"] == "strategy_backtest"
+    assert 'id="outOfSampleStart"' in page.text
+    assert 'id="slippageBps"' in page.text
+    assert 'id="minimumTurnover"' in page.text
+    assert "out_of_sample_start" in script.text
+    assert "slippage_bps" in script.text
+    assert "min_turnover" in script.text
+
+
+def test_model_performance_offers_factor_validation():
+    with TestClient(app) as client:
+        page = client.get("/performance/")
+        script = client.get("/static/performance.js")
+        response = client.get("/performance/factors")
+
+    assert 'value="factors"' in page.text
+    assert "/performance/factors" in script.text
+    assert "renderFactors" in script.text
+    assert response.status_code == 200
+    assert response.json()["mode"] == "factor_validation"
 
 
 def test_individual_stock_page_has_transparent_score():

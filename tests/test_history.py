@@ -26,6 +26,18 @@ def test_twse_history_parser():
     assert row.close == 21
 
 
+def test_twse_history_parser_accepts_trailing_footnote_marker():
+    payload = {
+        "stat": "OK",
+        "data": [["115/06/01", "1,000", "2,000,000", "20", "22", "19", "21", "+1", "27*", ""]],
+    }
+    client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload)))
+
+    row = TwseProvider(client).fetch_history_month("2330", date(2026, 6, 1))[0]
+
+    assert row.transaction_count == 27
+
+
 def test_tpex_history_parser_converts_thousands():
     payload = {"tables": [{"data": [["115/06/01", "1,557", "377,879", "242.5", "247", "240", "244", "2.5", "2,234"]]}]}
     client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload)))

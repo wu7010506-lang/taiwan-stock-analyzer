@@ -3,10 +3,23 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from decimal import Decimal
 
 from app.domain import DailyPrice, Instrument
+
+
+def _coverage_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    text = str(value).strip()[:10]
+    for pattern in ("%Y-%m-%d", "%Y%m%d", "%Y-%m"):
+        try:
+            return datetime.strptime(text, pattern).date()
+        except ValueError:
+            continue
+    return None
 
 
 SCHEMA = """
@@ -233,6 +246,11 @@ CREATE TABLE IF NOT EXISTS recommendation_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_recommendation_snapshots_profile_date
 ON recommendation_snapshots(profile, snapshot_date DESC, rank);
+CREATE TABLE IF NOT EXISTS vnext_recommendation_runs (
+    snapshot_date TEXT PRIMARY KEY,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS analysis_sync_state (
     symbol TEXT NOT NULL,
     dataset TEXT NOT NULL,
@@ -391,7 +409,8 @@ class Database:
                w.notes, i.name, i.industry,
                latest.trade_date, latest.close,
                previous.close AS previous_close,
-               (SELECT MAX(mp.trade_date) FROM daily_prices mp WHERE mp.close > 0)
+               (SELECT MAX(mp.trade_date) FROM daily_prices mp
+                WHERE mp.close > 0 AND mp.market=w.market)
                  AS market_latest_date,
                (SELECT MAX(h.close) FROM daily_prices h
                 WHERE h.symbol=w.symbol AND h.market=w.market) AS all_time_high_close
@@ -635,12 +654,32 @@ class Database:
                 "completion_percent": round(completed / total * 100, 1) if total else 0,
                 "failures": failures}
 
-    def create_daily_sync_run(self) -> int:
+    def create_daily_sync_run(self, stale_after_minutes: int = 360) -> int | None:
         with self.connect() as connection:
+            connection.execute(
+                """UPDATE daily_sync_runs
+                   SET status='failed', error='stale running job recovered on next start',
+                       finished_at=CURRENT_TIMESTAMP
+                   WHERE status='running' AND started_at < datetime('now', ?)""",
+                (f"-{max(1, stale_after_minutes)} minutes",),
+            )
+            running = connection.execute(
+                "SELECT id FROM daily_sync_runs WHERE status='running' ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            if running:
+                return None
             cursor = connection.execute(
                 "INSERT INTO daily_sync_runs(status) VALUES('running')"
             )
         return int(cursor.lastrowid)
+
+    def update_daily_sync_progress(self, run_id: int, steps_json: str) -> None:
+        """Persist completed steps while a long sync is still running."""
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE daily_sync_runs SET steps_json=? WHERE id=? AND status='running'",
+                (steps_json, run_id),
+            )
 
     def finish_daily_sync_run(self, run_id: int, status: str, steps_json: str,
                               error: str | None = None) -> None:
@@ -657,6 +696,59 @@ class Database:
                 "SELECT * FROM daily_sync_runs ORDER BY id DESC LIMIT 1"
             ).fetchone()
         return dict(row) if row else None
+
+    def get_market_data_freshness(self) -> dict:
+        """Expose per-market coverage so a completed job cannot hide stale stocks."""
+        datasets = (
+            ("prices", "daily_prices", "trade_date", 7),
+            ("revenues", "monthly_revenues", "revenue_month", 45),
+            ("valuations", "valuations", "valuation_date", 14),
+            ("financials", "financial_snapshots", "statement_date", 190),
+            ("institutions", "institutional_trades", "trade_date", 7),
+        )
+        result: dict[str, dict] = {}
+        with self.connect() as connection:
+            markets = [row[0] for row in connection.execute(
+                "SELECT DISTINCT market FROM instruments ORDER BY market"
+            )]
+            for market in markets:
+                total = connection.execute(
+                    "SELECT COUNT(*) FROM instruments WHERE market=?", (market,)
+                ).fetchone()[0]
+                coverage = {}
+                for name, table, column, tolerance_days in datasets:
+                    rows = connection.execute(
+                        f"""SELECT d.symbol,MAX(d.{column}) latest_date
+                            FROM {table} d JOIN instruments i
+                              ON i.symbol=d.symbol AND i.market=d.market
+                            WHERE d.market=? GROUP BY d.symbol""", (market,)
+                    ).fetchall()
+                    parsed = [(row[0], _coverage_date(row[1])) for row in rows]
+                    valid_dates = [item[1] for item in parsed if item[1] is not None]
+                    latest_date = max(valid_dates) if valid_dates else None
+                    cutoff = latest_date - timedelta(days=tolerance_days) if latest_date else None
+                    current = sum(item_date is not None and cutoff is not None and item_date >= cutoff
+                                  for _, item_date in parsed)
+                    coverage[name] = {
+                        "latest_date": latest_date.isoformat() if latest_date else None,
+                        "covered_stocks": current,
+                        "total_stocks": total,
+                        "coverage_percent": round(current / total * 100, 1) if total else 0,
+                        "stale_stocks": max(0, total - current),
+                    }
+                result[market] = coverage
+        return result
+
+    def get_market_cached_counts(self, market: str) -> dict[str, int]:
+        """Return cache size used when an official market endpoint is unavailable."""
+        with self.connect() as connection:
+            instruments = connection.execute(
+                "SELECT COUNT(*) FROM instruments WHERE market=?", (market,)
+            ).fetchone()[0]
+            prices = connection.execute(
+                "SELECT COUNT(*) FROM daily_prices WHERE market=?", (market,)
+            ).fetchone()[0]
+        return {"instruments": instruments, "prices": prices}
 
     def upsert_dividend_events(self, rows: list[dict]) -> int:
         with self.connect() as connection:
@@ -761,6 +853,22 @@ class Database:
                 params,
             ).fetchall()
         return [dict(row) for row in reversed(rows)]
+
+    def save_vnext_recommendation_run(self, snapshot_date: str, payload_json: str) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO vnext_recommendation_runs(snapshot_date,payload_json)
+                   VALUES(?,?) ON CONFLICT(snapshot_date) DO UPDATE SET
+                   payload_json=excluded.payload_json, created_at=CURRENT_TIMESTAMP""",
+                (snapshot_date, payload_json),
+            )
+
+    def get_latest_vnext_recommendation_run(self) -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM vnext_recommendation_runs ORDER BY snapshot_date DESC LIMIT 1"
+            ).fetchone()
+        return dict(row) if row else None
 
     def create_sync_run(
         self, symbol: str, market: str, start_date: str, end_date: str, months_total: int

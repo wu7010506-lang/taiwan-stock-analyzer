@@ -1,3 +1,5 @@
+import asyncio
+import json
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
@@ -19,6 +21,7 @@ from app.historical_fundamentals import sync_historical_fundamentals
 from app.fundamental_batch import run_fundamental_batch, run_price_history_batch
 from app.historical_valuation import get_historical_valuation
 from app.daily_sync import latest_daily_sync, run_daily_close_sync
+from app.sync_scheduler import daily_sync_loop
 from app.performance import capture_recommendation_snapshots, model_performance
 from app.analysis_sync import analysis_sync_plan, sync_missing_analysis_data
 from app.backtest import historical_backtest
@@ -34,6 +37,9 @@ from app.market_context import get_market_context
 from app.stock_score import score_stock
 from app.recommendations import recommend_stocks
 from app.vnext_model import evaluate_vnext_stock, recommend_vnext_stocks
+from app.data_quality import build_data_quality_report
+from app.factor_validation import factor_validation_report
+from app.dashboard import build_daily_dashboard
 from app.screening import (
     ScreenerFilters,
     screen_stocks,
@@ -49,7 +55,13 @@ async def lifespan(_: FastAPI):
     database.initialize()
     load_market_seed(database)
     load_analysis_seed(database)
-    yield
+    stop_scheduler = asyncio.Event()
+    scheduler_task = asyncio.create_task(daily_sync_loop(database, stop_scheduler))
+    try:
+        yield
+    finally:
+        stop_scheduler.set()
+        await scheduler_task
 
 
 app = FastAPI(title="台股分析 API", version="0.1.0", lifespan=lifespan)
@@ -87,6 +99,16 @@ def performance_interface() -> FileResponse:
     return FileResponse(static_dir / "performance.html")
 
 
+@app.get("/data-quality/", include_in_schema=False)
+def data_quality_interface() -> FileResponse:
+    return FileResponse(static_dir / "data-quality.html")
+
+
+@app.get("/dashboard/", include_in_schema=False)
+def dashboard_interface() -> FileResponse:
+    return FileResponse(static_dir / "dashboard.html")
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
@@ -116,6 +138,17 @@ def daily_sync_status() -> dict:
     return latest_daily_sync(database)
 
 
+@app.get("/data-quality")
+def data_quality(target_limit: int = Query(100, ge=10, le=200)) -> dict:
+    return build_data_quality_report(database, target_limit)
+
+
+@app.get("/dashboard")
+def dashboard() -> dict:
+    context = get_market_context()
+    return build_daily_dashboard(database, context)
+
+
 @app.post("/performance/snapshot")
 def performance_snapshot() -> dict:
     return capture_recommendation_snapshots(database, get_market_context())
@@ -124,23 +157,32 @@ def performance_snapshot() -> dict:
 @app.get("/performance/summary")
 def performance_summary(
     profile: Literal["evidence_based", "balanced"] = "evidence_based",
-    horizon: Literal[5, 20, 60, 120, 250] = 20,
+    horizon: Literal["5", "20", "60", "120", "250"] = "20",
     min_score: float = Query(65, ge=0, le=100),
 ) -> dict:
-    return model_performance(database, profile, horizon, min_score)
+    return model_performance(database, profile, int(horizon), min_score)
 
 
 @app.get("/performance/backtest")
 def performance_backtest(
-    horizon: Literal[5, 20, 60, 120, 250] = 20,
+    horizon: Literal["5", "20", "60", "120", "250"] = "20",
     min_score: float = Query(65, ge=0, le=100),
     top_n: int = Query(10, ge=1, le=50),
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> dict:
-    return historical_backtest(database, horizon, min_score, top_n,
+    return historical_backtest(database, int(horizon), min_score, top_n,
                                start_date.isoformat() if start_date else None,
                                end_date.isoformat() if end_date else None)
+
+
+@app.get("/performance/factors")
+def performance_factors(
+    profile: Literal["evidence_based", "balanced"] = "evidence_based",
+    horizon: Literal["5", "20", "60", "120", "250"] = "20",
+    minimum_sample: int = Query(20, ge=10, le=500),
+) -> dict:
+    return factor_validation_report(database, profile, int(horizon), minimum_sample)
 
 
 @app.get("/performance/strategy-backtest")
@@ -149,9 +191,24 @@ def performance_strategy_backtest(
     top_n: int = Query(10, ge=1, le=50),
     commission_bps: float = Query(14.25, ge=0, le=100),
     sell_tax_bps: float = Query(30, ge=0, le=100),
+    slippage_bps: float = Query(5, ge=0, le=100),
+    min_turnover: float = Query(10_000_000, ge=0),
+    start_date: date | None = None,
+    end_date: date | None = None,
+    out_of_sample_start: date | None = None,
 ) -> dict:
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(400, "start_date must not be after end_date")
+    if out_of_sample_start and start_date and out_of_sample_start < start_date:
+        raise HTTPException(400, "out_of_sample_start must be inside the selected period")
+    if out_of_sample_start and end_date and out_of_sample_start > end_date:
+        raise HTTPException(400, "out_of_sample_start must be inside the selected period")
     return strategy_walk_forward_backtest(
-        database, min_score, top_n, commission_bps, sell_tax_bps
+        database, min_score, top_n, commission_bps, sell_tax_bps, slippage_bps,
+        start_date.isoformat() if start_date else None,
+        end_date.isoformat() if end_date else None,
+        out_of_sample_start.isoformat() if out_of_sample_start else None,
+        min_turnover,
     )
 
 
@@ -508,7 +565,11 @@ def vnext_recommendations(
         context = get_market_context()
     except Exception:
         context = {"market_score": 50, "overheat_score": 0, "regime": "unknown"}
-    return recommend_vnext_stocks(database, as_of or date.today(), context, limit)
+    result = recommend_vnext_stocks(database, as_of or date.today(), context, limit)
+    database.save_vnext_recommendation_run(
+        result["as_of_date"], json.dumps(result, ensure_ascii=False, default=str)
+    )
+    return result
 
 
 @app.get("/market-context")

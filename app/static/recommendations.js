@@ -22,6 +22,7 @@ function money(value) {
 function lots(value) { return value == null ? "—" : `${number(Number(value) / 1000)} 張`; }
 
 const profiles = {
+  vnext: { title: "新版研究型推薦 vNext", weights: "企業品質70｜估值30｜進場時機獨立判斷｜市場現金與集中度限制", rule: "五年完整財報、現金流、三年價格與資料新鮮度符合時才給正式建議。" },
   balanced: { title: "綜合多因子", weights: "品質25｜估值20｜技術15｜營收15｜籌碼8｜流動性7｜大盤7｜時事3", rule: "營收分數由最新月營收年增與年度累計營收年增各占一半合成。" },
   long_term_quality: { title: "長期優質企業", weights: "品質30｜規模韌性20｜持續性15｜估值15｜流動性7｜營收5｜大盤3｜技術3｜籌碼1｜時事1", rule: "長期核心占80%；財報少於3期時，獲利持續性維持中性並顯示資料覆蓋率。" },
   evidence_based: { title: "研究型推薦（新版）", weights: "企業品質30｜現金流20｜持續性15｜估值15｜風險韌性10｜成長品質5｜市場配適5", rule: "至少五年且12期現金流才納入。成長若缺乏自由現金流支持會被封頂；市場偏空時提高品質、現金流與風險門檻。" },
@@ -31,6 +32,7 @@ const profiles = {
 };
 
 function factorCards(row) {
+  if (row.profile === "vnext") return `<span>企業品質<strong>${number(row.company_quality?.score)}</strong></span><span>資本報酬<strong>${number(row.company_quality?.capital_returns)}</strong></span><span>現金流品質<strong>${number(row.company_quality?.cashflow_quality)}</strong></span><span>估值<strong>${number(row.valuation_score)}</strong></span><span>進場時機<strong>${number(row.timing_score)}</strong></span><span>籌碼擁擠<strong>${row.crowding_risk || "—"}</strong></span><span>建議部位<strong>${number(row.suggested_position_percent)}%</strong></span>`;
   if (row.profile === "evidence_based") return `<span>企業品質<strong>${number(row.business_quality_score)}</strong></span><span>現金流<strong>${number(row.cashflow_quality_score)}</strong><small>FCF 正值 ${row.positive_fcf_ratio == null ? "—" : growth(row.positive_fcf_ratio * 100)}</small></span><span>持續性<strong>${number(row.durability_score)}</strong><small>${row.evidence_years} 年｜現金流 ${row.cash_flow_periods} 期</small></span><span>估值<strong>${number(row.value_score)}</strong><small>自身歷史 ${row.historical_value_score == null ? "—" : number(row.historical_value_score)}｜${row.historical_valuation_observations || 0} 日</small></span><span>風險韌性<strong>${number(row.risk_resilience_score)}</strong></span><span>成長品質<strong>${number(row.growth_quality_score)}</strong><small>年複合 ${row.revenue_cagr_annual == null ? "—" : growth(row.revenue_cagr_annual)}</small></span><span>市場配適<strong>${number(row.market_score)}</strong></span>`;
   if (row.profile === "long_term_quality") return `<span>品質<strong>${number(row.quality_score)}</strong></span><span>持續性<strong>${number(row.durability_score)}</strong><small>覆蓋 ${row.durability_coverage}%｜${row.financial_history_periods} 期</small></span><span>估值<strong>${number(row.value_score)}</strong></span><span>規模韌性<strong>${number(row.scale_score)}</strong></span><span>營收<strong>${number(row.revenue_growth_score)}</strong></span><span>技術<strong>${number(row.technical_score)}</strong></span><span>流動性<strong>${number(row.liquidity_score)}</strong></span><span>大盤<strong>${number(row.market_score)}</strong></span>`;
   return `<span>品質<strong>${number(row.quality_score)}</strong></span><span>估值<strong>${number(row.value_score)}</strong></span><span>技術<strong>${number(row.technical_score)}</strong></span><span>營收<strong>${number(row.revenue_growth_score)}</strong><small>月 ${growth(row.revenue_yoy)}｜累計 ${row.annual_revenue_yoy == null ? "—" : growth(row.annual_revenue_yoy)}</small></span><span>籌碼<strong>${number(row.chip_score)}</strong></span><span>流動性<strong>${number(row.liquidity_score)}</strong></span><span>大盤<strong>${number(row.market_score)}</strong></span><span>時事<strong>${number(row.news_score)}</strong></span>`;
@@ -40,7 +42,7 @@ async function loadMarketContext(refresh = false) {
   const el = $("#marketContext");
   try {
     const data = await api(`/market-context${refresh ? "?refresh=true" : ""}`);
-    el.innerHTML = `<div><small>市場狀態</small><strong>${data.regime}</strong></div>
+    el.innerHTML = `<div class="market-regime-status" data-regime="${data.regime || ""}"><small>市場狀態</small><strong>${data.regime}</strong></div>
       <div><small>大盤分數</small><strong>${number(data.market_score)}</strong></div>
       <div><small>近 5 日</small><strong>${growth(data.index_change_5d)}</strong></div>
       <div><small>近 20 日</small><strong>${growth(data.index_change_20d)}</strong></div>
@@ -68,7 +70,18 @@ async function loadRecommendations() {
   const status = $("#recommendationStatus"); status.textContent = "正在依最新資料評分…";
   try {
     const profile = $("#recommendationProfile").value;
-    const rows = await api(`/recommendations?limit=24&min_completeness=70&profile=${profile}`);
+    const response = profile === "vnext"
+      ? await api("/recommendations/vnext?limit=24")
+      : await api(`/recommendations?limit=24&min_completeness=70&profile=${profile}`);
+    const rows = profile === "vnext"
+      ? response.recommendations.map(row => ({
+          ...row, profile: "vnext", score: row.value_score, rating: row.action,
+          reasons: row.supporting_reasons || [], risks: row.risks || [],
+          institution_influence: row.crowding_risk || "unknown",
+          institution_influence_reasons: [], industry_adjustments: [],
+          invalidation_conditions: row.change_conditions || [],
+        }))
+      : response;
     status.textContent = rows.length ? `顯示 ${rows.length} 檔多因子研究候選｜市場：${rows[0].market_regime || "中性"}` : "沒有足夠完整的資料";
     $("#recommendationEmpty").classList.toggle("hidden", rows.length > 0);
     const grid = $("#recommendationGrid"); grid.hidden = rows.length === 0;

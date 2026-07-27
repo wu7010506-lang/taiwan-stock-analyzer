@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="整合市場、持股、觀察股與資料品質的每日投資決策儀表板">
+  <title>今日決策｜台股研究台</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260727-dashboard">
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/dashboard/"><span class="brand-mark">TW</span><span>台股研究台</span></a><div class="top-actions"><a href="/dashboard/" class="text-link nav-link active" aria-current="page">今日決策</a><a href="/alerts/" class="text-link nav-link">提醒中心</a><a href="/watchlist/" class="text-link nav-link">我的股票</a><a href="/recommendations/" class="text-link nav-link">股票推薦</a><a href="/screener/" class="text-link nav-link">所有股票</a></div></header>
+  <main class="shell">
+    <section class="intro dashboard-intro"><div><p class="eyebrow">DAILY DECISION DESK</p><h1>今日投資決策</h1><p>先看市場與資料風險，再處理持股、觀察股與新機會。</p></div><button id="reloadDashboard" class="button secondary">重新整理</button></section>
+    <section id="decisionGate" class="decision-gate" aria-live="polite">正在檢查資料與市場狀態…</section>
+    <section id="dashboardSummary" class="dashboard-summary"></section>
+    <section class="dashboard-grid">
+      <article class="table-card dashboard-panel"><div class="section-heading"><div><p class="eyebrow">PORTFOLIO ACTIONS</p><h2>持股處理</h2></div><a href="/watchlist/">查看全部</a></div><div id="heldActions" class="dashboard-actions"></div></article>
+      <article class="table-card dashboard-panel"><div class="section-heading"><div><p class="eyebrow">WATCHING</p><h2>觀察股進場</h2></div><a href="/watchlist/">查看全部</a></div><div id="watchActions" class="dashboard-actions"></div></article>
+      <article class="table-card dashboard-panel"><div class="section-heading"><div><p class="eyebrow">RESEARCH CANDIDATES</p><h2>正式研究候選</h2></div><a href="/recommendations/">模型詳情</a></div><div id="candidateActions" class="dashboard-actions"></div></article>
+      <article class="table-card dashboard-panel"><div class="section-heading"><div><p class="eyebrow">RISKS</p><h2>今日重要風險</h2></div><a href="/data-quality/">資料品質</a></div><div id="riskActions" class="dashboard-actions"></div></article>
+    </section>
+    <p class="warning-copy dashboard-warning">本頁是研究與風險檢查工具，不保證報酬；實際交易前請核對官方公告、成交條件與自身風險承受度。</p>
+  </main>
+  <script src="/static/dashboard.js"></script><script src="/static/global-sync.js"></script>
+</body></html>

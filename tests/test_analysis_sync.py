@@ -2,7 +2,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
-from app.analysis_sync import analysis_sync_plan
+from app.analysis_sync import _incomplete_coverage_reason, analysis_sync_plan
 from app.database import Database
 from app.domain import DailyPrice, Instrument
 
@@ -50,3 +50,11 @@ def test_sync_plan_requires_history_when_only_latest_quotes_exist(tmp_path: Path
         Decimal("99"), Decimal("100"), 1000,
     )])
     assert "prices" in analysis_sync_plan(database, "2330")["missing"]
+
+
+def test_incomplete_coverage_reason_explains_a_silent_sync_shortfall():
+    reason = _incomplete_coverage_reason("revenues", {"rows": 1, "latest_date": "2026-06"})
+
+    assert "revenues" in reason
+    assert "rows=1" in reason
+    assert "2026-06" in reason

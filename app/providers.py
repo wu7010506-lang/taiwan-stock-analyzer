@@ -15,7 +15,7 @@ class ProviderError(RuntimeError):
 
 
 def _number(value: Any) -> Decimal:
-    text = str(value or "0").replace(",", "").strip()
+    text = str(value or "0").replace(",", "").strip().rstrip("*")
     if text in {"", "--", "---", "-"}:
         return Decimal(0)
     try:

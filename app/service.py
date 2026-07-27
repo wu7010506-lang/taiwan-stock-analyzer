@@ -18,9 +18,23 @@ def sync_market_data(database: Database) -> dict[str, dict[str, int | str]]:
                 result[provider.market] = {
                     "instruments": database.upsert_instruments(instruments),
                     "prices": database.upsert_prices(prices),
+                    "status": "live",
+                    "source": f"{provider.market} official API",
+                    "fallback_used": False,
                 }
             except Exception as exc:  # 保留另一市場繼續更新
-                result[provider.market] = {"error": str(exc)}
+                cached = database.get_market_cached_counts(provider.market)
+                fallback_used = bool(cached["instruments"] or cached["prices"])
+                result[provider.market] = {
+                    **cached,
+                    "status": "cached" if fallback_used else "failed",
+                    "source": "local cache" if fallback_used else None,
+                    "fallback_used": fallback_used,
+                    "error": str(exc),
+                }
+    failures = [market for market, item in result.items() if item.get("error")]
+    result["status"] = "completed" if not failures else "partial"
+    result["failed_markets"] = failures
     return result
 
 

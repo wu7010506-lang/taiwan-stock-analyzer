@@ -254,6 +254,7 @@ def evaluate_vnext_stock(
         risks.append("limited_valuation_history")
     return {
         "model": "vnext", "symbol": symbol, "name": instrument_row["name"],
+        "market": instrument_row["market"],
         "industry": instrument_row["industry"], "industry_category": category,
         "industry_model": industry_label(instrument_row["industry"]),
         "as_of_date": cutoff, "eligibility": eligibility,
@@ -315,7 +316,8 @@ def recommend_vnext_stocks(
         status_counts[status] = status_counts.get(status, 0) + 1
         for missing in result["eligibility"]["missing"]:
             missing_counts[missing] = missing_counts.get(missing, 0) + 1
-        if (result["value_score"] is not None and result["value_score"] >= 60
+        if (result["eligibility"]["status"] == "eligible"
+                and result["value_score"] is not None and result["value_score"] >= 60
                 and not result.get("recommendation_suspended", False)):
             candidates.append(result)
     candidates.sort(key=lambda item: (item["value_score"], item["timing_score"]), reverse=True)

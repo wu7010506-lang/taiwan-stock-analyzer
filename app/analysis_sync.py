@@ -112,6 +112,12 @@ def _record(database: Database, symbol: str, dataset: str, status: str,
         )
 
 
+def _incomplete_coverage_reason(dataset: str, coverage: dict) -> str:
+    """Explain a no-exception sync that still did not meet its readiness rule."""
+    return (f"{dataset} sync returned without an exception but coverage remains insufficient "
+            f"(rows={coverage.get('rows') or 0}, latest_date={coverage.get('latest_date') or 'none'})")
+
+
 def sync_missing_analysis_data(database: Database, symbol: str, force: bool = False) -> dict:
     plan = analysis_sync_plan(database, symbol)
     requested = list(DATASETS if force else plan["missing"])
@@ -139,6 +145,16 @@ def sync_missing_analysis_data(database: Database, symbol: str, force: bool = Fa
             results[name] = {"status": "failed", "error": str(exc)}
             _record(database, symbol, name, "failed", str(exc)[:500])
     after = analysis_sync_plan(database, symbol)
+    for name in after["missing"]:
+        detail = results.get(name)
+        if isinstance(detail, dict) and detail.get("status") == "failed":
+            continue
+        reason = _incomplete_coverage_reason(name, after["coverage"][name])
+        if isinstance(detail, dict):
+            results[name] = {**detail, "status": "incomplete", "error": reason}
+        else:
+            results[name] = {"status": "incomplete", "error": reason}
+        _record(database, symbol, name, "incomplete", reason)
     return {"symbol": symbol, "status": "completed" if not after["missing"] else "partial",
             "requested": requested, "results": results, "remaining": after["missing"],
             "coverage": after["coverage"]}
@@ -149,9 +165,17 @@ def sync_watchlist_analysis_data(database: Database) -> dict:
     results = []
     for row in rows:
         result = sync_missing_analysis_data(database, row["symbol"])
+        errors = {
+            dataset: detail.get("error")
+            for dataset, detail in result["results"].items()
+            if isinstance(detail, dict) and detail.get("status") in {"failed", "incomplete"}
+        }
         results.append({"symbol": row["symbol"], "status": result["status"],
-                        "requested": result["requested"], "remaining": result["remaining"]})
+                        "requested": result["requested"], "remaining": result["remaining"],
+                        "errors": errors})
     completed = sum(item["status"] == "completed" for item in results)
+    failures = [item for item in results if item["status"] != "completed"]
     return {"status": "completed" if completed == len(results) else "partial",
             "stocks": len(results), "completed": completed,
-            "partial": len(results) - completed, "results": results}
+            "partial": len(results) - completed, "results": results,
+            "failures": failures}
