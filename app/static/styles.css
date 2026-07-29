@@ -11,6 +11,10 @@
   --shadow: 0 14px 40px rgba(23, 34, 30, .07);
 }
 
+.quality-actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+#financialBatchMessage { margin:12px 0 0; line-height:1.6; }
+.quality-issue.resolved { border-left-color:var(--green); background:var(--green-soft); }
+
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink); font-family: "Segoe UI", "Noto Sans TC", sans-serif; }
 button, input, select { font: inherit; }
@@ -195,7 +199,7 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .form-divider { height: 1px; background: var(--line); margin: 20px 0; }
 
 .content { display: grid; gap: 24px; min-width: 0; }
-.chart-card, .table-card, .revenue-card, .valuation-card, .financial-card, .dividend-card, .ownership-card, .institution-card, .company-profile-card, .score-card { padding: 22px; }
+.chart-card, .table-card, .revenue-card, .valuation-card, .financial-card, .dividend-card, .ownership-card, .institution-card, .company-profile-card, .score-card, .technical-indicator-card { padding: 22px; }
 .company-summary { margin: 0 0 18px; color: var(--ink); font-size: 16px; line-height: 1.8; }
 .company-facts { display: flex; gap: 1px; background: var(--line); border: 1px solid var(--line); }
 .company-facts div { flex: 1; background: var(--paper); padding: 12px; }.company-facts span { display: block; color: var(--muted); font-size: 10px; margin-bottom: 5px; }.company-facts strong { font-size: 12px; }
@@ -217,6 +221,8 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .metric span { display: block; color: var(--muted); font-size: 12px; margin-bottom: 9px; }
 .metric strong { font-family: Georgia, serif; font-size: 22px; font-weight: 500; }
 .metric small { display: block; color: var(--muted); margin-top: 6px; font-size: 11px; }
+.technical-indicator-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); }
+.technical-indicator { background: var(--paper); padding: 13px; min-height: 73px; }.technical-indicator span { display: block; color: var(--muted); font-size: 10px; margin-bottom: 7px; }.technical-indicator strong { font: 500 17px Georgia, serif; }.technical-indicator.is-unavailable strong { color: var(--muted); font-family: inherit; font-size: 12px; }.technical-unavailable { padding: 15px; color: var(--muted); }
 .revenue-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); margin-bottom: 24px; }
 .revenue-stat { background: var(--paper); padding: 14px; }
 .revenue-stat span { color: var(--muted); display: block; font-size: 11px; margin-bottom: 8px; }
@@ -256,6 +262,7 @@ input:focus, select:focus { border-color: var(--green); box-shadow: 0 0 0 3px rg
 .institution-summary article { padding: 15px; border-radius: 10px; background: var(--green-soft); }
 .institution-summary span { color: var(--muted); font-size: 11px; }.institution-summary strong { display: block; margin: 7px 0; font: 500 22px Georgia, serif; }
 .institution-summary small { color: var(--muted); font-size: 11px; }
+.decision-history { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); }.decision-history article { padding: 13px; background: var(--paper); }.decision-history strong,.decision-history span,.decision-history small { display:block; }.decision-history span,.decision-history small { color: var(--muted); font-size: 11px; margin-top: 5px; }
 
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -301,6 +308,7 @@ th:not(:first-child), td:not(:first-child) { text-align: right; }
   .metric-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
   .metric { padding: 13px; }.metric strong { font-size: 19px; }
   .chart-wrap { height: 260px; }
+  .technical-indicator-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .chart-controls { flex-direction: column; }.chart-controls select { min-width: 105px; padding: 8px; }.candlestick-legend { justify-content: flex-start; flex-wrap: wrap; }
   .section-heading { align-items: end; }.section-heading h2 { font-size: 21px; }
   .screener-panel summary span:first-child { display: block; }.screener-panel summary small { display: block; margin-top: 5px; }

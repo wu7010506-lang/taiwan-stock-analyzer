@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 
 from app.database import Database
+from app.point_in_time import financial_available_sql, revenue_available_sql
 
 
 def normalized_date_sql(column: str) -> str:
@@ -28,9 +29,11 @@ def assess_vnext_data_eligibility(
     """Decide whether point-in-time data can support a formal vNext recommendation."""
     cutoff = as_of_date.isoformat()
     valuation_date = normalized_date_sql("valuation_date")
+    financial_available_date = financial_available_sql("statement_date")
+    revenue_available_date = revenue_available_sql("revenue_month")
     with database.connect() as connection:
         financial = dict(connection.execute(
-            """SELECT COUNT(*) AS periods,
+            f"""SELECT COUNT(*) AS periods,
                       COUNT(DISTINCT fiscal_year) AS years,
                       SUM(CASE WHEN operating_cash_flow IS NOT NULL
                                AND free_cash_flow IS NOT NULL THEN 1 ELSE 0 END)
@@ -39,14 +42,16 @@ def assess_vnext_data_eligibility(
                         AS missing_statement_dates,
                       MAX(statement_date) AS latest_date
                FROM financial_snapshots
-               WHERE symbol=? AND statement_date<=?""",
+               WHERE symbol=? AND statement_date IS NOT NULL
+                 AND {financial_available_date}<=?""",
             (symbol, cutoff),
         ).fetchone())
         complete_years = connection.execute(
-            """SELECT COUNT(*) FROM (
+            f"""SELECT COUNT(*) FROM (
                    SELECT fiscal_year
                    FROM financial_snapshots
-                   WHERE symbol=? AND statement_date<=?
+                   WHERE symbol=? AND statement_date IS NOT NULL
+                     AND {financial_available_date}<=?
                    GROUP BY fiscal_year
                    HAVING COUNT(DISTINCT fiscal_quarter)=4
                )""",
@@ -59,8 +64,8 @@ def assess_vnext_data_eligibility(
             (symbol, cutoff),
         ).fetchone())
         latest_revenue = connection.execute(
-            """SELECT MAX(revenue_month) FROM monthly_revenues
-               WHERE symbol=? AND revenue_month<=substr(?, 1, 7)""",
+            f"""SELECT MAX(revenue_month) FROM monthly_revenues
+               WHERE symbol=? AND {revenue_available_date}<=?""",
             (symbol, cutoff),
         ).fetchone()[0]
         latest_valuation = connection.execute(
@@ -76,11 +81,12 @@ def assess_vnext_data_eligibility(
         ignored_future_rows = connection.execute(
             f"""SELECT
                  (SELECT COUNT(*) FROM financial_snapshots
-                  WHERE symbol=? AND statement_date>?)
+                 WHERE symbol=? AND statement_date IS NOT NULL
+                   AND {financial_available_date}>?)
                + (SELECT COUNT(*) FROM daily_prices
                   WHERE symbol=? AND trade_date>?)
                + (SELECT COUNT(*) FROM monthly_revenues
-                  WHERE symbol=? AND revenue_month>substr(?, 1, 7))
+                 WHERE symbol=? AND {revenue_available_date}>?)
                + (SELECT COUNT(*) FROM valuations
                   WHERE symbol=? AND {valuation_date}>?)
                + (SELECT COUNT(*) FROM institutional_trades

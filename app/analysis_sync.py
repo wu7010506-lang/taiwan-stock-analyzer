@@ -62,9 +62,11 @@ def analysis_sync_plan(database: Database, symbol: str) -> dict:
             bool(coverage["prices"]["latest_date"] and market_latest_date
                  and coverage["prices"]["latest_date"] >= market_latest_date)
             or _successful_today(attempts.get("prices"))
-        ),
-        "revenues": coverage["revenues"]["rows"] >= 10 and ages["revenues"] is not None and ages["revenues"] <= 75,
-        "valuations": coverage["valuations"]["rows"] >= 10 and ages["valuations"] is not None and ages["valuations"] <= 7,
+        ) or _limited_recently(attempts.get("prices")),
+        "revenues": (coverage["revenues"]["rows"] >= 10 and ages["revenues"] is not None
+                     and ages["revenues"] <= 75) or _limited_recently(attempts.get("revenues")),
+        "valuations": (coverage["valuations"]["rows"] >= 10 and ages["valuations"] is not None
+                       and ages["valuations"] <= 7) or _limited_recently(attempts.get("valuations")),
         "financials": coverage["financials"]["rows"] >= 1 and (
             ages["financials"] is not None and ages["financials"] <= 180
             or fetched_ages["financials"] is not None and fetched_ages["financials"] <= 7
@@ -75,10 +77,16 @@ def analysis_sync_plan(database: Database, symbol: str) -> dict:
         "institutions": ages["institutions"] is not None and ages["institutions"] <= 7,
     }
     missing = [name for name in DATASETS if not ready[name]]
+    history_sufficient = {
+        "prices": coverage["prices"]["rows"] >= 120,
+        "revenues": coverage["revenues"]["rows"] >= 10,
+        "valuations": coverage["valuations"]["rows"] >= 10,
+    }
     return {"symbol": symbol, "ready": not missing, "missing": missing,
             "market_latest_date": market_latest_date,
             "coverage": {name: {**coverage[name], "age_days": ages[name],
-                                  "fetched_age_days": fetched_ages[name], "ready": ready[name]}
+                                  "fetched_age_days": fetched_ages[name], "ready": ready[name],
+                                  "history_sufficient": history_sufficient.get(name)}
                          for name in DATASETS}}
 
 
@@ -99,6 +107,27 @@ def _successful_today(row: dict | None) -> bool:
         return datetime.fromisoformat(str(row["last_attempt"])).date() == date.today()
     except ValueError:
         return False
+
+
+def _limited_recently(row: dict | None) -> bool:
+    return bool(row and row.get("status") == "limited" and _recent_success(
+        {**row, "status": "completed"}, 30
+    ))
+
+
+def _current_but_short(dataset: str, coverage: dict,
+                       market_latest_date: str | None) -> bool:
+    if not coverage.get("rows") or not coverage.get("latest_date"):
+        return False
+    if dataset == "prices":
+        return bool(market_latest_date and coverage["latest_date"] >= market_latest_date)
+    if dataset == "revenues":
+        age = coverage.get("age_days")
+        return age is not None and age <= 75
+    if dataset == "valuations":
+        age = coverage.get("age_days")
+        return age is not None and age <= 7
+    return False
 
 
 def _record(database: Database, symbol: str, dataset: str, status: str,
@@ -127,10 +156,12 @@ def sync_missing_analysis_data(database: Database, symbol: str, force: bool = Fa
     # This also bypasses lag in TWSE's bulk STOCK_DAY_ALL endpoint cheaply.
     price_start = (today.replace(day=1)
                    if plan["coverage"]["prices"]["rows"] >= 120 else start)
+    valuation_start = (today.replace(day=1) if plan["coverage"]["valuations"]["rows"]
+                       else start)
     operations = {
         "prices": lambda: sync_history(database, symbol, price_start, today),
         "revenues": lambda: sync_revenue(database, symbol, start.strftime("%Y-%m"), today.strftime("%Y-%m")),
-        "valuations": lambda: sync_valuations(database, symbol, start.strftime("%Y-%m"), today.strftime("%Y-%m")),
+        "valuations": lambda: sync_valuations(database, symbol, valuation_start.strftime("%Y-%m"), today.strftime("%Y-%m")),
         "financials": lambda: sync_financials(database, symbol),
         "dividends": lambda: sync_dividends(database, symbol),
         "ownership": lambda: sync_ownership(database, symbol),
@@ -149,12 +180,23 @@ def sync_missing_analysis_data(database: Database, symbol: str, force: bool = Fa
         detail = results.get(name)
         if isinstance(detail, dict) and detail.get("status") == "failed":
             continue
-        reason = _incomplete_coverage_reason(name, after["coverage"][name])
+        coverage = after["coverage"][name]
+        if _current_but_short(name, coverage, after.get("market_latest_date")):
+            reason = (f"{name} 已同步至最新日期，但可取得歷史較短 "
+                      f"(rows={coverage.get('rows')}, latest_date={coverage.get('latest_date')})")
+            if isinstance(detail, dict):
+                results[name] = {**detail, "status": "limited_history", "message": reason}
+            else:
+                results[name] = {"status": "limited_history", "message": reason}
+            _record(database, symbol, name, "limited", reason)
+            continue
+        reason = _incomplete_coverage_reason(name, coverage)
         if isinstance(detail, dict):
             results[name] = {**detail, "status": "incomplete", "error": reason}
         else:
             results[name] = {"status": "incomplete", "error": reason}
         _record(database, symbol, name, "incomplete", reason)
+    after = analysis_sync_plan(database, symbol)
     return {"symbol": symbol, "status": "completed" if not after["missing"] else "partial",
             "requested": requested, "results": results, "remaining": after["missing"],
             "coverage": after["coverage"]}

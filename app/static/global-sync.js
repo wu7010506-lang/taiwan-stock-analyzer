@@ -38,7 +38,8 @@
 
   const labels = {
     market: "行情", fundamentals: "基本面", institutions: "法人", watchlist_analysis: "觀察股",
-    market_context: "市場狀態", recommendation_snapshots: "推薦快照", data_freshness: "資料覆蓋率",
+    research_history_batch: "全市場五年財報", market_context: "市場狀態",
+    recommendation_snapshots: "推薦快照", vnext_recommendations: "vNext 推薦", data_freshness: "資料覆蓋率",
   };
 
   function text(value) { return value == null ? "—" : String(value); }

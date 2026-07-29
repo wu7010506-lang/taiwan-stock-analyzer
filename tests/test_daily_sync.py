@@ -98,11 +98,17 @@ def test_daily_sync_persists_progress_between_steps(tmp_path: Path, monkeypatch)
     monkeypatch.setattr(daily_sync, "_market_context_summary", lambda: {"status": "completed"})
     monkeypatch.setattr(daily_sync, "capture_recommendation_snapshots", lambda db, context: {"status": "completed"})
     monkeypatch.setattr(daily_sync, "get_market_context", lambda: {})
+    monkeypatch.setattr(daily_sync, "run_fundamental_batch",
+                        lambda db, **kwargs: {"status": "completed"})
+    monkeypatch.setattr(daily_sync, "run_price_history_batch",
+                        lambda db, **kwargs: {"status": "completed"})
 
     daily_sync.run_daily_close_sync(database)
 
     assert any(snapshot.get("market", {}).get("status") == "running" for snapshot in recorded)
     assert any(snapshot.get("market", {}).get("status") == "completed" for snapshot in recorded)
+    assert any("research_history_batch" in snapshot for snapshot in recorded)
+    assert any("research_price_history_batch" in snapshot for snapshot in recorded)
 
 
 def test_scheduler_runs_once_after_close_on_business_day(monkeypatch):

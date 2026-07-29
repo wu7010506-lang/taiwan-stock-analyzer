@@ -3,6 +3,7 @@ const state = {
   stock: null, prices: [], analysis: null, revenues: [], revenueAnalysis: null,
   valuations: [], valuationAnalysis: null, financials: [], financialAnalysis: null,
   dividends: [], ownership: null, institutions: [], company: null, score: null,
+  technical: null,
   autoSyncedSymbols: new Set(),
 };
 let toastTimer;
@@ -173,7 +174,7 @@ async function autoSyncStockData(symbol) {
 async function loadStock() {
   const symbol = state.stock.symbol;
   try {
-    const [prices, analysis, revenues, revenueAnalysis, valuations, valuationAnalysis, financials, financialAnalysis, dividends, ownership, institutions, company, score] = await Promise.all([
+    const [prices, analysis, revenues, revenueAnalysis, valuations, valuationAnalysis, financials, financialAnalysis, dividends, ownership, institutions, company, score, technical] = await Promise.all([
       api(`/stocks/${symbol}/prices?limit=1000`).catch(() => []),
       api(`/stocks/${symbol}/analysis`).catch(() => null),
       api(`/stocks/${symbol}/revenue?limit=60`).catch(() => []),
@@ -187,6 +188,7 @@ async function loadStock() {
       api(`/stocks/${symbol}/institutions?limit=60`).catch(() => []),
       api(`/stocks/${symbol}/company`).catch(() => null),
       api(`/stocks/${symbol}/score`).catch(() => null),
+      api(`/stocks/${symbol}/technical?limit=300`).catch(() => null),
     ]);
     state.prices = prices;
     state.analysis = analysis;
@@ -201,8 +203,10 @@ async function loadStock() {
     state.institutions = institutions;
     state.company = company;
     state.score = score;
+    state.technical = technical;
     renderQuote();
     renderAnalysis();
+    renderTechnicalIndicators();
     renderTable();
     scheduleChartDraw();
     renderRevenue();
@@ -523,6 +527,32 @@ function renderAnalysis() {
   $("#metricGrid").innerHTML = metrics.map(([label, value, note, percent, textValue]) => `
     <div class="metric"><span>${label}</span><strong>${textValue ? value : percent ? formatPercent(value) : formatNumber(value)}</strong><small>${note}</small></div>
   `).join("");
+}
+
+function renderTechnicalIndicators() {
+  const technical = state.technical;
+  const grid = $("#technicalIndicatorGrid");
+  const note = $("#technicalIndicatorNote");
+  if (!technical) {
+    grid.innerHTML = '<div class="technical-unavailable">技術指標資料不足或尚未同步。</div>';
+    note.textContent = "資料不足不會被當成中性訊號。";
+    return;
+  }
+  const values = technical.indicators || {};
+  const labels = [
+    ["SMA 20", "sma_20"], ["SMA 60", "sma_60"], ["RSI 14", "rsi_14"],
+    ["MACD", "macd"], ["MACD signal", "macd_signal"], ["ATR 14", "atr_14"],
+    ["Bollinger upper", "bollinger_upper"], ["Bollinger lower", "bollinger_lower"],
+    ["Volume / 20d", "volume_ratio_20"], ["Distance to 60d high", "distance_to_60d_high_percent"],
+  ];
+  grid.innerHTML = labels.map(([label, key]) => {
+    const value = values[key];
+    const display = value === null || value === undefined ? "資料不足" :
+      key === "distance_to_60d_high_percent" ? `${formatNumber(value)}%` : formatNumber(value);
+    return `<div class="technical-indicator ${value == null ? "is-unavailable" : ""}"><span>${label}</span><strong>${display}</strong></div>`;
+  }).join("");
+  const available = Object.entries(technical.availability || {}).filter(([, value]) => value).map(([key]) => key);
+  note.textContent = `資料截至 ${technical.as_of || "未知"}，使用 ${technical.input_rows || 0} 筆日資料；可用面向：${available.join("、") || "無"}。技術指標僅描述價格行為，並不保證未來報酬。`;
 }
 
 function renderTable() {

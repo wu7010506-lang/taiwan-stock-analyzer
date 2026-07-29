@@ -11,6 +11,7 @@ from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from app.analysis import analyze
+from app.technical_indicators import calculate_technical_indicators
 from app.config import settings
 from app.database import Database
 from app.service import sync_history, sync_market_data
@@ -26,6 +27,7 @@ from app.performance import capture_recommendation_snapshots, model_performance
 from app.analysis_sync import analysis_sync_plan, sync_missing_analysis_data
 from app.backtest import historical_backtest
 from app.strategy_backtest import strategy_walk_forward_backtest
+from app.vnext_backtest import vnext_walk_forward_backtest
 from app.portfolio import PositionUpdate, portfolio_summary
 from app.dividends import sync_dividends
 from app.ownership import analyze_ownership, sync_ownership
@@ -37,9 +39,13 @@ from app.market_context import get_market_context
 from app.stock_score import score_stock
 from app.recommendations import recommend_stocks
 from app.vnext_model import evaluate_vnext_stock, recommend_vnext_stocks
+from app.recommendation_watchlist import add_top_recommendations_to_watchlist
+from app.recommendation_gate import apply_formal_recommendation_gate
 from app.data_quality import build_data_quality_report
+from app.data_quality import build_data_quality_report, capture_data_quality_snapshot
 from app.factor_validation import factor_validation_report
 from app.dashboard import build_daily_dashboard
+from app.decision_history import capture_daily_decision_history
 from app.screening import (
     ScreenerFilters,
     screen_stocks,
@@ -143,10 +149,32 @@ def data_quality(target_limit: int = Query(100, ge=10, le=200)) -> dict:
     return build_data_quality_report(database, target_limit)
 
 
+@app.post("/data-quality/snapshot")
+def data_quality_snapshot() -> dict:
+    return capture_data_quality_snapshot(database)
+
+
+@app.get("/data-quality/snapshots")
+def data_quality_snapshots(limit: int = Query(30, ge=1, le=100)) -> list[dict]:
+    return database.list_data_quality_snapshots(limit)
+
+
 @app.get("/dashboard")
 def dashboard() -> dict:
     context = get_market_context()
     return build_daily_dashboard(database, context)
+
+
+@app.post("/dashboard/snapshot")
+def dashboard_snapshot() -> dict:
+    context = get_market_context()
+    quality = database.list_data_quality_snapshots(1)
+    return capture_daily_decision_history(database, context, quality[0]["id"] if quality else None)
+
+
+@app.get("/dashboard/history")
+def dashboard_history(limit: int = Query(30, ge=1, le=180)) -> list[dict]:
+    return database.list_daily_decision_logs(limit)
 
 
 @app.post("/performance/snapshot")
@@ -209,6 +237,27 @@ def performance_strategy_backtest(
         end_date.isoformat() if end_date else None,
         out_of_sample_start.isoformat() if out_of_sample_start else None,
         min_turnover,
+    )
+
+
+@app.get("/performance/vnext-walk-forward")
+def performance_vnext_walk_forward(
+    horizon: Literal["5", "20", "60", "120", "250"] = "20",
+    top_n: int = Query(10, ge=1, le=50),
+    commission_bps: float = Query(14.25, ge=0, le=100),
+    sell_tax_bps: float = Query(30, ge=0, le=100),
+    slippage_bps: float = Query(5, ge=0, le=100),
+    min_turnover: float = Query(10_000_000, ge=0),
+    embargo_sessions: int = Query(7, ge=0, le=60),
+    start_date: date | None = None,
+    end_date: date | None = None,
+) -> dict:
+    if start_date and end_date and start_date > end_date:
+        raise HTTPException(400, "start_date must not be after end_date")
+    return vnext_walk_forward_backtest(
+        database, int(horizon), top_n, commission_bps, sell_tax_bps, slippage_bps,
+        min_turnover, start_date.isoformat() if start_date else None,
+        end_date.isoformat() if end_date else None, embargo_sessions,
     )
 
 
@@ -308,6 +357,16 @@ def stock_analysis(symbol: str) -> dict:
     result = analyze(database.get_prices(symbol, 100_000))
     if not result:
         raise HTTPException(404, "找不到行情；請先執行 POST /sync")
+    return result
+
+
+@app.get("/stocks/{symbol}/technical")
+def stock_technical_analysis(symbol: str, limit: int = Query(300, ge=20, le=1000)) -> dict:
+    if not database.get_instrument(symbol):
+        raise HTTPException(404, f"Stock {symbol} was not found")
+    result = calculate_technical_indicators(database.get_prices(symbol, limit))
+    if result["input_rows"] == 0:
+        raise HTTPException(404, "No daily price history is available")
     return result
 
 
@@ -481,16 +540,21 @@ def fundamentals_coverage(symbol: str) -> dict:
 
 @app.post("/financials/history/batch")
 def financial_history_batch(
-    target_limit: int = Query(100, ge=10, le=200),
+    target_limit: int = Query(100, ge=10, le=2500),
     batch_size: int = Query(10, ge=1, le=10),
     years: int = Query(5, ge=3, le=10), retry_failed: bool = False,
+    scope: Literal["popular", "all"] = "popular",
 ) -> dict:
-    return run_fundamental_batch(database, target_limit, batch_size, years, retry_failed)
+    return run_fundamental_batch(database, None if scope == "all" else target_limit,
+                                 batch_size, years, retry_failed)
 
 
 @app.get("/financials/history/batch/status")
-def financial_history_batch_status(target_limit: int = Query(100, ge=10, le=200)) -> dict:
-    return database.get_fundamental_sync_progress(target_limit)
+def financial_history_batch_status(
+    target_limit: int = Query(100, ge=10, le=2500),
+    scope: Literal["popular", "all"] = "popular",
+) -> dict:
+    return database.get_fundamental_sync_progress(None if scope == "all" else target_limit)
 
 
 @app.get("/stocks/{symbol}/valuation/history")
@@ -553,7 +617,11 @@ def recommendations(
     profile: Literal["balanced", "value", "growth", "quality", "long_term_quality",
                      "evidence_based"] = "balanced",
 ) -> list[dict]:
-    return recommend_stocks(database, limit, min_completeness, profile)
+    effective_limit = max(limit, 20) if profile == "evidence_based" else limit
+    rows = recommend_stocks(database, effective_limit, min_completeness, profile)
+    if profile == "evidence_based":
+        add_top_recommendations_to_watchlist(database, rows, 20)
+    return rows[:limit]
 
 
 @app.get("/recommendations/vnext")
@@ -566,6 +634,11 @@ def vnext_recommendations(
     except Exception:
         context = {"market_score": 50, "overheat_score": 0, "regime": "unknown"}
     result = recommend_vnext_stocks(database, as_of or date.today(), context, limit)
+    apply_formal_recommendation_gate(result, build_data_quality_report(database))
+    result["watchlist_sync"] = (
+        add_top_recommendations_to_watchlist(database, result, 20)
+        if result["formal_recommendation_gate"]["allowed"] else {"added": 0, "skipped": "data_quality_gate"}
+    )
     database.save_vnext_recommendation_run(
         result["as_of_date"], json.dumps(result, ensure_ascii=False, default=str)
     )

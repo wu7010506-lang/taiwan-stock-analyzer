@@ -62,6 +62,20 @@
     $("#performanceStatus").textContent += ` ${oosSummary}`;
   }
 
+  function renderVnextWalkForward(data) {
+    $("#performanceSummary").innerHTML = [
+      metric("Walk-forward folds", number(data.signals)),
+      metric("Matured positions", number(data.matured_positions)),
+      metric("Average net return", signed(data.average_net_return_percent), data.average_net_return_percent >= 0 ? "positive-text" : "negative-text"),
+      metric("Win rate", number(data.win_rate_percent, "%")),
+      metric("Purged signals", number(data.purged_signals)),
+      metric("Liquidity threshold", number(data.minimum_daily_turnover)),
+    ].join("");
+    const rows = (data.outcomes || []).slice().reverse().map(row => `<tr><td>${row.signal_date}</td><td>${row.entry_date}</td><td>${row.exit_date}</td><td>${row.symbol}</td><td>${number(row.score)}</td><td>${signed(row.net_return_percent)}</td><td>${number(row.cash_dividend)}</td></tr>`).join("");
+    setTable("vNext point-in-time Walk-forward", "PIT / COSTS / LIQUIDITY", ["Signal", "Entry", "Exit", "Stock", "Score", "Net return", "Cash dividend"], rows);
+    $("#performanceStatus").textContent = data.folds?.length ? "Historical simulation: availability lags, costs, slippage, liquidity and cash dividends are included." : "No eligible point-in-time folds were available for the chosen period.";
+  }
+
   function renderHistorical(data) {
     $("#performanceSummary").innerHTML = [
       metric("已完成訊號", number(data.total_signals)), metric("評分日期", number(data.scoring_dates)),
@@ -97,7 +111,8 @@
   }
 
   function render(data) {
-    if (data.mode === "factor_validation") renderFactors(data);
+    if (data.mode === "vnext_walk_forward") renderVnextWalkForward(data);
+    else if (data.mode === "factor_validation") renderFactors(data);
     else if (data.mode === "strategy_backtest") renderStrategy(data);
     else if (data.mode === "historical_backtest") renderHistorical(data);
     else renderLive(data);
@@ -110,8 +125,9 @@
     $("#horizonControl").hidden = mode === "strategy";
     $("#topNControl").hidden = mode === "live";
     $("#outOfSampleControl").hidden = mode !== "strategy";
-    $("#slippageControl").hidden = mode !== "strategy";
-    $("#turnoverControl").hidden = mode !== "strategy";
+    $("#slippageControl").hidden = !["strategy", "vnext"].includes(mode);
+    $("#turnoverControl").hidden = !["strategy", "vnext"].includes(mode);
+    $("#embargoControl").hidden = mode !== "vnext";
   }
 
   async function load() {
@@ -123,11 +139,13 @@
     const outOfSampleStart = $("#outOfSampleStart").value;
     const slippageBps = $("#slippageBps").value;
     const minimumTurnover = $("#minimumTurnover").value;
+    const embargoSessions = $("#embargoSessions").value;
     syncControls();
     $("#performanceStatus").textContent = "正在載入模型成績⋯";
     try {
       const url = mode === "factors" ? `/performance/factors?profile=${profile}&horizon=${horizon}`
         : mode === "strategy" ? `/performance/strategy-backtest?min_score=${score}&top_n=${topN}&slippage_bps=${slippageBps}&min_turnover=${minimumTurnover}${outOfSampleStart ? `&out_of_sample_start=${outOfSampleStart}` : ""}`
+        : mode === "vnext" ? `/performance/vnext-walk-forward?horizon=${horizon}&top_n=${topN}&slippage_bps=${slippageBps}&min_turnover=${minimumTurnover}&embargo_sessions=${embargoSessions}`
         : mode === "backtest" ? `/performance/backtest?horizon=${horizon}&min_score=${score}&top_n=${topN}`
           : `/performance/summary?profile=${profile}&horizon=${horizon}&min_score=${score}`;
       render(await api(url));
@@ -144,7 +162,7 @@
 
   $("#reloadPerformanceButton").addEventListener("click", load);
   $("#captureSnapshotButton").addEventListener("click", capture);
-  ["#performanceMode", "#performanceProfile", "#performanceHorizon", "#outOfSampleStart", "#slippageBps", "#minimumTurnover"].forEach(id => $(id).addEventListener("change", load));
+  ["#performanceMode", "#performanceProfile", "#performanceHorizon", "#outOfSampleStart", "#slippageBps", "#minimumTurnover", "#embargoSessions"].forEach(id => $(id).addEventListener("change", load));
   api("/health").then(() => { $("#apiStatus").className = "status-dot online"; $("#apiStatus").innerHTML = "<i></i>服務正常"; }).catch(() => {});
   load();
 })();

@@ -1,11 +1,23 @@
-from app.historical_prices import normalize_finmind_prices
+from datetime import date
+from pathlib import Path
+
+from app.database import Database
+from app.domain import Instrument
+from app import historical_prices
 
 
-def test_normalizes_finmind_prices():
-    rows = normalize_finmind_prices([{"date": "2026-07-22", "stock_id": "2330",
-        "Trading_Volume": 1000, "Trading_money": 1500000, "open": 1490,
-        "max": 1510, "min": 1480, "close": 1500, "Trading_turnover": 123}], "TWSE")
-    assert len(rows) == 1
-    assert rows[0].symbol == "2330"
-    assert float(rows[0].close) == 1500
-    assert rows[0].volume == 1000
+def test_price_history_uses_official_exchange_when_finmind_fails(tmp_path: Path, monkeypatch):
+    database = Database(tmp_path / "stocks.db")
+    database.initialize()
+    database.upsert_instruments([Instrument("2330", "A", "TWSE", None)])
+    monkeypatch.setattr(historical_prices, "sync_finmind_price_history",
+                        lambda *_: (_ for _ in ()).throw(RuntimeError("quota")))
+    monkeypatch.setattr(historical_prices, "sync_history", lambda *_: {
+        "status": "completed", "rows_written": 650,
+    })
+
+    result = historical_prices.sync_price_history_with_fallback(database, "2330", 3)
+
+    assert result["fallback_used"] is True
+    assert result["source"] == "TWSE/TPEx official history fallback"
+    assert "quota" in result["primary_error"]

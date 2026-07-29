@@ -56,3 +56,4 @@ def test_analysis_ignores_zero_price_placeholders():
 
 def test_parse_roc_compact_date():
     assert _parse_date("1150717").isoformat() == "2026-07-17"
+    assert _parse_date("114/11/27*").isoformat() == "2025-11-27"

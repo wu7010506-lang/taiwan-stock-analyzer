@@ -21,7 +21,11 @@
   <main class="shell">
     <section class="intro data-quality-intro">
       <div><p class="eyebrow">DATA RELIABILITY</p><h1>資料品質中心</h1><p>先確認日期、覆蓋率與同步錯誤，再採用推薦與買賣建議。</p></div>
-      <button id="reloadQualityButton" class="button secondary" type="button">重新檢查</button>
+      <div class="quality-actions">
+        <button id="syncAllFinancialsButton" class="button" type="button">補齊下一批完整財報</button>
+        <button id="snapshotQualityButton" class="button secondary" type="button">保存品質快照</button>
+        <button id="reloadQualityButton" class="button secondary" type="button">重新檢查</button>
+      </div>
     </section>
     <section id="qualitySummary" class="quality-summary" aria-live="polite"></section>
     <section class="table-card">
@@ -29,8 +33,13 @@
       <div class="table-scroll"><table><thead><tr><th>市場</th><th>資料</th><th>最新日期</th><th>覆蓋</th><th>覆蓋率</th><th>落後股票</th></tr></thead><tbody id="coverageRows"></tbody></table></div>
     </section>
     <section class="quality-layout">
-      <article class="table-card"><div class="section-heading"><div><p class="eyebrow">SYNC QUEUES</p><h2>批次補齊進度</h2></div></div><div id="queueCards" class="quality-queue-grid"></div></article>
+      <article class="table-card"><div class="section-heading"><div><p class="eyebrow">SYNC QUEUES</p><h2>批次補齊進度</h2></div></div><div id="queueCards" class="quality-queue-grid"></div><p id="financialBatchMessage" class="muted"></p></article>
       <article class="table-card"><div class="section-heading"><div><p class="eyebrow">ACTION REQUIRED</p><h2>需要處理的問題</h2></div></div><div id="qualityIssues" class="quality-issues"></div></article>
+    </section>
+    <section class="table-card">
+      <div class="section-heading"><div><p class="eyebrow">DATA CONTRACTS</p><h2>正式推薦資料契約</h2></div></div>
+      <div class="table-scroll"><table><thead><tr><th>市場／資料</th><th>門檻</th><th>目前覆蓋率</th><th>最新日期</th><th>結果</th></tr></thead><tbody id="contractRows"></tbody></table></div>
+      <p id="snapshotMessage" class="muted"></p>
     </section>
     <section class="table-card quality-source-card">
       <div class="section-heading"><div><p class="eyebrow">SOURCE POLICY</p><h2>資料來源與替代策略</h2></div></div>

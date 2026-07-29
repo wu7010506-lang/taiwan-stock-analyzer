@@ -7,6 +7,7 @@ from app.database import Database
 from app.evidence_model import build_evidence_from_rows
 from app.industry_model import industry_category, industry_label
 from app.vnext_eligibility import assess_vnext_data_eligibility, normalized_date_sql
+from app.point_in_time import financial_available_sql, revenue_available_sql
 
 
 def _bounded(value: float | None, low: float, high: float, inverse: bool = False) -> float:
@@ -68,9 +69,12 @@ def _evaluate_short_history_stock(
     """Conservative observation model for companies without five full years of history."""
     cutoff = as_of_date.isoformat()
     valuation_date = normalized_date_sql("valuation_date")
+    financial_available_date = financial_available_sql("statement_date")
+    revenue_available_date = revenue_available_sql("revenue_month")
     with database.connect() as connection:
         financials = [dict(row) for row in connection.execute(
-            """SELECT * FROM financial_snapshots WHERE symbol=? AND statement_date<=?
+            f"""SELECT * FROM financial_snapshots WHERE symbol=? AND statement_date IS NOT NULL
+               AND {financial_available_date}<=?
                ORDER BY statement_date DESC LIMIT 8""", (symbol, cutoff)
         )]
         prices = [dict(row) for row in connection.execute(
@@ -82,8 +86,8 @@ def _evaluate_short_history_stock(
                  ORDER BY {valuation_date} DESC LIMIT 60""", (symbol, cutoff)
         )][::-1]
         revenue = connection.execute(
-            """SELECT yoy_percent, cumulative_yoy_percent FROM monthly_revenues
-               WHERE symbol=? AND revenue_month<=substr(?,1,7)
+            f"""SELECT yoy_percent, cumulative_yoy_percent FROM monthly_revenues
+               WHERE symbol=? AND {revenue_available_date}<=?
                ORDER BY revenue_month DESC LIMIT 1""", (symbol, cutoff)
         ).fetchone()
 
@@ -139,13 +143,15 @@ def evaluate_vnext_stock(
 
     cutoff = as_of_date.isoformat()
     valuation_date = normalized_date_sql("valuation_date")
+    financial_available_date = financial_available_sql("statement_date")
     with database.connect() as connection:
         instrument_row = connection.execute(
             "SELECT * FROM instruments WHERE symbol=?", (symbol,)
         ).fetchone()
         financial_rows = [dict(row) for row in connection.execute(
-            """SELECT * FROM financial_snapshots
-               WHERE symbol=? AND statement_date<=?
+            f"""SELECT * FROM financial_snapshots
+               WHERE symbol=? AND statement_date IS NOT NULL
+                 AND {financial_available_date}<=?
                ORDER BY fiscal_year, fiscal_quarter""",
             (symbol, cutoff),
         )]

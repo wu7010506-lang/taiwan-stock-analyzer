@@ -94,15 +94,27 @@ def sync_valuations(database: Database, symbol: str, start: str, end: str) -> di
     today = date.today()
     written = 0
     missing = 0
+    with database.connect() as connection:
+        market_dates = [row[0] for row in connection.execute(
+            """SELECT DISTINCT trade_date FROM daily_prices
+               WHERE market=? AND trade_date BETWEEN ? AND ? ORDER BY trade_date""",
+            (instrument["market"], f"{start}-01", f"{end}-31"),
+        )]
+    last_trading_date = {}
+    for value in market_dates:
+        last_trading_date[value[:7]] = date.fromisoformat(value)
     headers = {"User-Agent": settings.user_agent, "Accept": "application/json"}
     with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers, follow_redirects=True) as client:
         for year, month in months:
             last_day = calendar.monthrange(year, month)[1]
             target = min(date(year, month, last_day), today)
             row = None
-            # 月底若為週末、假日或當月尚未收盤，向前尋找最近有資料的交易日。
-            for offset in range(min(15, target.day)):
-                candidate = target - timedelta(days=offset)
+            known_trading_date = last_trading_date.get(f"{year:04d}-{month:02d}")
+            # Prefer the locally known market calendar: one official request per month.
+            candidates = ([known_trading_date] if known_trading_date else
+                          [target - timedelta(days=offset)
+                           for offset in range(min(15, target.day))])
+            for candidate in candidates:
                 row = fetch_valuation_date(
                     client, symbol, instrument["market"], candidate
                 )

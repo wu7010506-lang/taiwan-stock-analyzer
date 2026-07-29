@@ -207,6 +207,47 @@ CREATE TABLE IF NOT EXISTS fundamental_sync_queue (
 );
 CREATE INDEX IF NOT EXISTS idx_fundamental_sync_queue_status
 ON fundamental_sync_queue(status, priority);
+CREATE TABLE IF NOT EXISTS data_sync_jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dataset TEXT NOT NULL,
+    market TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    range_start TEXT,
+    range_end TEXT,
+    priority INTEGER NOT NULL DEFAULT 1000,
+    status TEXT NOT NULL DEFAULT 'pending',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 3,
+    last_error TEXT,
+    last_source TEXT,
+    last_success_at TEXT,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(dataset, market, symbol, range_start, range_end)
+);
+CREATE INDEX IF NOT EXISTS idx_data_sync_jobs_dispatch
+ON data_sync_jobs(dataset, status, priority, updated_at);
+CREATE TABLE IF NOT EXISTS data_sync_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_id INTEGER NOT NULL,
+    attempted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    source TEXT,
+    status TEXT NOT NULL,
+    rows_written INTEGER NOT NULL DEFAULT 0,
+    error TEXT,
+    FOREIGN KEY(job_id) REFERENCES data_sync_jobs(id)
+);
+CREATE INDEX IF NOT EXISTS idx_data_sync_attempts_job
+ON data_sync_attempts(job_id, attempted_at DESC);
+CREATE TABLE IF NOT EXISTS data_source_health (
+    source TEXT NOT NULL,
+    dataset TEXT NOT NULL,
+    last_attempt_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_success_at TEXT,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    last_rows_written INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (source, dataset)
+);
 CREATE TABLE IF NOT EXISTS daily_sync_runs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     status TEXT NOT NULL,
@@ -251,6 +292,33 @@ CREATE TABLE IF NOT EXISTS vnext_recommendation_runs (
     payload_json TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS vnext_backtest_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at TEXT NOT NULL,
+    ended_at TEXT NOT NULL,
+    parameters_json TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_vnext_backtest_runs_created
+ON vnext_backtest_runs(created_at DESC);
+CREATE TABLE IF NOT EXISTS daily_decision_logs (
+    decision_date TEXT PRIMARY KEY,
+    market_context_json TEXT NOT NULL,
+    quality_snapshot_id INTEGER,
+    vnext_snapshot_date TEXT,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(quality_snapshot_id) REFERENCES data_quality_snapshots(id)
+);
+CREATE TABLE IF NOT EXISTS data_quality_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    generated_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    report_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_data_quality_snapshots_generated
+ON data_quality_snapshots(generated_at DESC);
 CREATE TABLE IF NOT EXISTS analysis_sync_state (
     symbol TEXT NOT NULL,
     dataset TEXT NOT NULL,
@@ -522,11 +590,28 @@ class Database:
             )
         return len(rows)
 
-    def reset_failed_fundamental_syncs(self) -> int:
+    def list_research_sync_universe(self, limit: int | None = None) -> list[dict]:
+        """Return current instruments with liquid names first and no price-only omissions."""
+        popular = self.list_popular_stocks(limit or 100_000)
+        seen = {(row["symbol"], row["market"]) for row in popular}
+        with self.connect() as connection:
+            remaining = [dict(row) for row in connection.execute(
+                """SELECT symbol,name,market,industry FROM instruments
+                   ORDER BY market,symbol"""
+            ) if (row["symbol"], row["market"]) not in seen]
+        rows = popular + remaining
+        return rows[:limit] if limit else rows
+
+    def reset_failed_fundamental_syncs(self, quota_cooldown_minutes: int = 60,
+                                      max_attempts: int = 3) -> int:
         with self.connect() as connection:
             cursor = connection.execute(
                 """UPDATE fundamental_sync_queue SET status='pending', error=NULL,
-                          updated_at=CURRENT_TIMESTAMP WHERE status='failed'"""
+                          updated_at=CURRENT_TIMESTAMP WHERE status='failed'
+                     AND (LOWER(COALESCE(error,'')) NOT LIKE '%quota%'
+                          OR datetime(updated_at) <= datetime('now', ?))
+                     AND attempts < ?""",
+                (f"-{max(1, quota_cooldown_minutes)} minutes", max(1, max_attempts)),
             )
         return cursor.rowcount
 
@@ -574,12 +659,24 @@ class Database:
                 f"""SELECT symbol, market, error, attempts FROM fundamental_sync_queue
                     {failure_where} status='failed' ORDER BY priority LIMIT 10""", params
             )]
+            quota_where = condition + (" AND" if condition else "WHERE")
+            quota_limited = connection.execute(
+                f"""SELECT COUNT(*) FROM fundamental_sync_queue {quota_where}
+                    status='failed' AND LOWER(COALESCE(error,'')) LIKE '%quota%'""", params
+            ).fetchone()[0]
+            terminal_failed = connection.execute(
+                f"""SELECT COUNT(*) FROM fundamental_sync_queue {failure_where}
+                    status='failed' AND attempts >= 3""", params
+            ).fetchone()[0]
         counts = {row["status"]: row["count"] for row in rows}
         total = sum(counts.values())
         completed = counts.get("completed", 0)
         return {"total": total, "pending": counts.get("pending", 0),
                 "running": counts.get("running", 0), "completed": completed,
                 "failed": counts.get("failed", 0),
+                "remaining": total - completed,
+                "quota_limited": quota_limited,
+                "terminal_failed": terminal_failed,
                 "completion_percent": round(completed / total * 100, 1) if total else 0,
                 "failures": failures}
 
@@ -591,7 +688,7 @@ class Database:
                           price_rows=(SELECT COUNT(*) FROM daily_prices p
                                       WHERE p.symbol=q.symbol AND p.market=q.market),
                           price_error=NULL, updated_at=CURRENT_TIMESTAMP
-                   WHERE price_status!='completed'
+                   WHERE price_status NOT IN ('completed', 'short_history')
                      AND (SELECT COUNT(*) FROM daily_prices p
                           WHERE p.symbol=q.symbol AND p.market=q.market) >= 500"""
             )
@@ -624,35 +721,136 @@ class Database:
         return rows
 
     def finish_price_sync(self, symbol: str, market: str, rows: int = 0,
-                          error: str | None = None) -> None:
+                          error: str | None = None,
+                          status: str | None = None) -> None:
         with self.connect() as connection:
             connection.execute(
                 """UPDATE fundamental_sync_queue SET price_status=?, price_rows=?,
                           price_error=?, updated_at=CURRENT_TIMESTAMP
                    WHERE symbol=? AND market=?""",
-                ("failed" if error else "completed", rows, error, symbol, market),
+                (status or ("failed" if error else "completed"), rows, error, symbol, market),
             )
 
-    def get_price_sync_progress(self, target_limit: int = 100) -> dict:
+    def get_price_sync_progress(self, target_limit: int | None = 100) -> dict:
+        condition = "WHERE priority <= ?" if target_limit else ""
+        params = (target_limit,) if target_limit else ()
         with self.connect() as connection:
             rows = connection.execute(
                 """SELECT price_status AS status, COUNT(*) AS count
-                   FROM fundamental_sync_queue WHERE priority <= ? GROUP BY price_status""",
-                (target_limit,),
+                   FROM fundamental_sync_queue %s GROUP BY price_status""" % condition,
+                params,
             ).fetchall()
             failures = [dict(row) for row in connection.execute(
                 """SELECT symbol, market, price_error AS error FROM fundamental_sync_queue
-                   WHERE priority <= ? AND price_status='failed'
-                   ORDER BY priority LIMIT 10""", (target_limit,)
+                   %s %s price_status='failed'
+                   ORDER BY priority LIMIT 10""" % (condition, "AND" if condition else "WHERE"),
+                params,
             )]
         counts = {row["status"]: row["count"] for row in rows}
         total = sum(counts.values())
         completed = counts.get("completed", 0)
+        short_history = counts.get("short_history", 0)
+        resolved = completed + short_history
         return {"total": total, "pending": counts.get("pending", 0),
                 "running": counts.get("running", 0), "completed": completed,
+                "short_history": short_history,
                 "failed": counts.get("failed", 0),
-                "completion_percent": round(completed / total * 100, 1) if total else 0,
+                "completion_percent": round(resolved / total * 100, 1) if total else 0,
                 "failures": failures}
+
+    def enqueue_data_sync_jobs(self, dataset: str, rows: list[dict],
+                               range_start: str | None = None,
+                               range_end: str | None = None) -> int:
+        """Persist a dataset × stock × date-range audit trail without resetting progress."""
+        with self.connect() as connection:
+            connection.executemany(
+                """INSERT INTO data_sync_jobs(dataset,market,symbol,range_start,range_end,priority)
+                   VALUES(?,?,?,?,?,?) ON CONFLICT(dataset,market,symbol,range_start,range_end)
+                   DO UPDATE SET priority=excluded.priority, updated_at=CURRENT_TIMESTAMP""",
+                [(dataset, row["market"], row["symbol"], range_start, range_end, index)
+                 for index, row in enumerate(rows, 1)],
+            )
+        return len(rows)
+
+    def record_data_sync_attempt(self, dataset: str, symbol: str, market: str,
+                                 rows_written: int = 0, error: str | None = None,
+                                 source: str | None = None) -> None:
+        with self.connect() as connection:
+            job = connection.execute(
+                """SELECT id,attempts,max_attempts FROM data_sync_jobs
+                   WHERE dataset=? AND symbol=? AND market=?
+                   ORDER BY id DESC LIMIT 1""", (dataset, symbol, market),
+            ).fetchone()
+            if not job:
+                return
+            status = "completed" if error is None else (
+                "terminal_failed" if job["attempts"] + 1 >= job["max_attempts"] else "failed"
+            )
+            connection.execute(
+                """UPDATE data_sync_jobs SET status=?, attempts=attempts+1,
+                   last_error=?, last_source=?, last_success_at=
+                   CASE WHEN ? IS NULL THEN CURRENT_TIMESTAMP ELSE last_success_at END,
+                   updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                (status, error, source, error, job["id"]),
+            )
+            connection.execute(
+                """INSERT INTO data_sync_attempts(job_id,source,status,rows_written,error)
+                   VALUES(?,?,?,?,?)""",
+                (job["id"], source, status, rows_written, error),
+            )
+
+    def get_data_sync_job_progress(self, dataset: str | None = None) -> dict:
+        condition = "WHERE dataset=?" if dataset else ""
+        params = (dataset,) if dataset else ()
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"SELECT status,COUNT(*) AS count FROM data_sync_jobs {condition} GROUP BY status",
+                params,
+            ).fetchall()
+            failures = [dict(row) for row in connection.execute(
+                f"""SELECT dataset,market,symbol,last_error,attempts,max_attempts,last_source
+                    FROM data_sync_jobs {condition} AND status IN ('failed','terminal_failed')
+                    ORDER BY priority LIMIT 10""" if condition else
+                """SELECT dataset,market,symbol,last_error,attempts,max_attempts,last_source
+                   FROM data_sync_jobs WHERE status IN ('failed','terminal_failed')
+                   ORDER BY priority LIMIT 10""", params,
+            )]
+        counts = {row["status"]: row["count"] for row in rows}
+        total = sum(counts.values())
+        return {"total": total, "pending": counts.get("pending", 0),
+                "completed": counts.get("completed", 0), "failed": counts.get("failed", 0),
+                "terminal_failed": counts.get("terminal_failed", 0), "failures": failures}
+
+    def record_data_source_health(self, source: str, dataset: str, *,
+                                  rows_written: int = 0,
+                                  error: str | None = None) -> None:
+        """Keep a compact, durable signal for provider availability and fallback use."""
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO data_source_health
+                   (source,dataset,last_success_at,consecutive_failures,last_error,last_rows_written)
+                   VALUES(?,?,CASE WHEN ? IS NULL THEN CURRENT_TIMESTAMP END,
+                          CASE WHEN ? IS NULL THEN 0 ELSE 1 END,?,?)
+                   ON CONFLICT(source,dataset) DO UPDATE SET
+                     last_attempt_at=CURRENT_TIMESTAMP,
+                     last_success_at=CASE WHEN excluded.last_error IS NULL
+                                          THEN CURRENT_TIMESTAMP
+                                          ELSE data_source_health.last_success_at END,
+                     consecutive_failures=CASE WHEN excluded.last_error IS NULL THEN 0
+                                               ELSE data_source_health.consecutive_failures+1 END,
+                     last_error=excluded.last_error,
+                     last_rows_written=excluded.last_rows_written""",
+                (source, dataset, error, error, error, rows_written),
+            )
+
+    def get_data_source_health(self) -> list[dict]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT source,dataset,last_attempt_at,last_success_at,consecutive_failures,
+                          last_error,last_rows_written
+                   FROM data_source_health ORDER BY consecutive_failures DESC, source, dataset"""
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def create_daily_sync_run(self, stale_after_minutes: int = 360) -> int | None:
         with self.connect() as connection:
@@ -869,6 +1067,56 @@ class Database:
                 "SELECT * FROM vnext_recommendation_runs ORDER BY snapshot_date DESC LIMIT 1"
             ).fetchone()
         return dict(row) if row else None
+
+    def save_vnext_backtest_run(self, started_at: str, ended_at: str,
+                                parameters_json: str, result_json: str) -> int:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """INSERT INTO vnext_backtest_runs
+                   (started_at,ended_at,parameters_json,result_json) VALUES(?,?,?,?)""",
+                (started_at, ended_at, parameters_json, result_json),
+            )
+        return int(cursor.lastrowid)
+
+    def save_daily_decision_log(self, decision_date: str, market_context_json: str,
+                                payload_json: str, quality_snapshot_id: int | None = None,
+                                vnext_snapshot_date: str | None = None) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO daily_decision_logs
+                   (decision_date,market_context_json,quality_snapshot_id,vnext_snapshot_date,payload_json)
+                   VALUES(?,?,?,?,?) ON CONFLICT(decision_date) DO UPDATE SET
+                   market_context_json=excluded.market_context_json,
+                   quality_snapshot_id=excluded.quality_snapshot_id,
+                   vnext_snapshot_date=excluded.vnext_snapshot_date,
+                   payload_json=excluded.payload_json,created_at=CURRENT_TIMESTAMP""",
+                (decision_date, market_context_json, quality_snapshot_id,
+                 vnext_snapshot_date, payload_json),
+            )
+
+    def list_daily_decision_logs(self, limit: int = 30) -> list[dict]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM daily_decision_logs ORDER BY decision_date DESC LIMIT ?""", (limit,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_data_quality_snapshot(self, generated_at: str, status: str, report_json: str) -> int:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """INSERT INTO data_quality_snapshots(generated_at,status,report_json)
+                   VALUES(?,?,?)""",
+                (generated_at, status, report_json),
+            )
+            return int(cursor.lastrowid)
+
+    def list_data_quality_snapshots(self, limit: int = 30) -> list[dict]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT id,generated_at,status,report_json FROM data_quality_snapshots
+                   ORDER BY id DESC LIMIT ?""", (limit,)
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def create_sync_run(
         self, symbol: str, market: str, start_date: str, end_date: str, months_total: int

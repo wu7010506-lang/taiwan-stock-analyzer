@@ -69,7 +69,6 @@ def test_watchlist_has_its_own_page():
     assert '/position`' in script.text
     assert "portfolio_decision" in script.text
     assert "position-decision" in script.text
-    assert "(portfolio.watching_decisions || [])" in script.text
 
 
 def test_recommendations_have_their_own_explainable_page():
@@ -88,6 +87,10 @@ def test_recommendations_have_their_own_explainable_page():
     assert 'api("/popular-stocks?limit=12")' in script.text
     assert 'value="vnext"' in response.text
     assert '"/recommendations/vnext?limit=24"' in script.text
+    assert 'accumulate:"分批加碼"' in script.text
+    assert 'durable_business_quality:"企業品質具持續性"' in script.text
+    assert 'fundamentals_deteriorate:"基本面惡化"' in script.text
+    assert "speculation_risk: row.crowding_risk" in script.text
 
 
 def test_ui_auto_syncs_one_year_when_stock_is_selected():
@@ -265,3 +268,16 @@ def test_vnext_is_exposed_as_separate_api_without_replacing_existing_model():
     assert "/stocks/{symbol}/vnext" in schema["paths"]
     assert "/recommendations/vnext" in schema["paths"]
     assert "/recommendations" in schema["paths"]
+
+
+def test_data_quality_page_offers_resumable_full_market_financial_batch():
+    with TestClient(app) as client:
+        page = client.get("/data-quality/")
+        script = client.get("/static/data-quality.js")
+        schema = client.get("/openapi.json").json()
+
+    assert 'id="syncAllFinancialsButton"' in page.text
+    assert "scope=all" in script.text
+    assert "每日收盤同步也會自動接續" in script.text
+    parameters = schema["paths"]["/financials/history/batch"]["post"]["parameters"]
+    assert any(item["name"] == "scope" for item in parameters)

@@ -35,6 +35,10 @@ def test_dashboard_page_is_available():
     assert "今日投資決策" in page.text
     assert script.status_code == 200
     assert 'fetch("/dashboard")' in script.text
+    assert "(portfolio.watching_decisions || [])" in script.text
+    assert ".slice(0,8)" not in script.text
+    assert "watchingDecisionDetail" in script.text
+    assert "decision.risks" in script.text
 
 
 def test_dashboard_uses_persisted_vnext_snapshot(tmp_path: Path, monkeypatch):

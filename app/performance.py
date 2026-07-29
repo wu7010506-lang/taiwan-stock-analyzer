@@ -7,6 +7,7 @@ from statistics import mean, median
 from app.database import Database
 from app.providers import _parse_date
 from app.recommendations import recommend_stocks
+from app.recommendation_watchlist import add_top_recommendations_to_watchlist
 
 
 TRACKED_FACTORS = (
@@ -41,6 +42,8 @@ def capture_recommendation_snapshots(database: Database, context: dict,
         rows = recommend_stocks(database, limit=limit,
                                  min_completeness=0 if profile == "evidence_based" else 70,
                                  profile=profile, context=context)
+        if profile == "evidence_based":
+            add_top_recommendations_to_watchlist(database, rows, 20)
         payload = []
         for rank, row in enumerate(rows, 1):
             if row.get("close") is None or not row.get("trade_date"):

@@ -45,3 +45,16 @@ def test_strategy_backtest_endpoint_exposes_slippage_and_liquidity_parameters():
     parameters = schema["paths"]["/performance/strategy-backtest"]["get"]["parameters"]
     names = {item["name"] for item in parameters}
     assert {"slippage_bps", "min_turnover", "out_of_sample_start"} <= names
+
+
+def test_vnext_walk_forward_endpoint_exposes_pit_and_cost_parameters():
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+    with TestClient(app) as client:
+        schema = client.get("/openapi.json").json()
+
+    parameters = schema["paths"]["/performance/vnext-walk-forward"]["get"]["parameters"]
+    names = {item["name"] for item in parameters}
+    assert {"horizon", "commission_bps", "sell_tax_bps", "slippage_bps",
+            "min_turnover", "embargo_sessions"} <= names

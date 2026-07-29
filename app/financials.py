@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from calendar import monthrange
 from decimal import Decimal, InvalidOperation
 
 import httpx
@@ -78,12 +79,23 @@ def normalize_financial_rows(
 ) -> dict:
     year = int(_pick(income_row, "年度", "Year") or 0)
     quarter = int(_pick(income_row, "季別", "Season") or 0)
+    fiscal_year = year + 1911 if year < 1911 else year
+    fiscal_month = quarter * 3
+    # The official latest-quarter feeds provide a fiscal year/quarter but no
+    # disclosure timestamp.  Store the fiscal period end (not an invented
+    # publication date); point-in-time consumers apply the conservative
+    # availability lag in app.point_in_time.
+    statement_date = None
+    if fiscal_year > 1900 and fiscal_month in {3, 6, 9, 12}:
+        statement_date = f"{fiscal_year:04d}-{fiscal_month:02d}-{monthrange(fiscal_year, fiscal_month)[1]:02d}"
     return {
         "symbol": _symbol(income_row),
         "market": market,
-        "fiscal_year": year + 1911 if year < 1911 else year,
+        "fiscal_year": fiscal_year,
         "fiscal_quarter": quarter,
         "report_type": report_type,
+        "statement_date": statement_date,
+        "source": f"{market} official OpenAPI",
         "revenue": _decimal(_pick(income_row, "營業收入", "收益")),
         "gross_profit": _decimal(
             _pick(income_row, "營業毛利（毛損）淨額", "營業毛利（毛損）")

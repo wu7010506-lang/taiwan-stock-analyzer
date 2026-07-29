@@ -3,6 +3,12 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
+LOCAL_PACKAGES = ROOT / ".local-packages"
+
+# Local development dependencies may be installed inside the workspace when
+# the shared runtime package cache is unavailable or unreadable.
+if LOCAL_PACKAGES.exists():
+    sys.path.insert(0, str(LOCAL_PACKAGES))
 sys.path.insert(0, r"C:\codex_runtime\taiwan_stock_packages")
 sys.path.insert(0, str(ROOT))
 

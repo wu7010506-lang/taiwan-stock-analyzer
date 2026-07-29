@@ -29,7 +29,8 @@ def _integer(value: Any) -> int:
 
 
 def _parse_date(value: str) -> date:
-    text = value.strip().replace("/", "-")
+    # Official tables sometimes append * as a footnote marker to the date.
+    text = value.strip().rstrip("*").strip().replace("/", "-")
     if text.isdigit() and len(text) == 7:
         return date(int(text[:3]) + 1911, int(text[3:5]), int(text[5:7]))
     if text.isdigit() and len(text) == 8:

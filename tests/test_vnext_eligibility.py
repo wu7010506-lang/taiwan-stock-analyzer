@@ -130,6 +130,23 @@ def test_eligibility_never_uses_data_published_after_scoring_date(tmp_path: Path
     assert result["checks"]["point_in_time"]["ignored_future_rows"] > 0
 
 
+def test_eligibility_does_not_use_a_quarter_before_conservative_publication_lag(tmp_path: Path):
+    database = Database(tmp_path / "stocks.db")
+    database.initialize()
+    database.upsert_instruments([Instrument("2330", "A", "TWSE", None)])
+    database.upsert_financials({
+        "symbol": "2330", "market": "TWSE", "fiscal_year": 2026,
+        "fiscal_quarter": 2, "report_type": "test", "revenue": 100,
+        "operating_cash_flow": 20, "free_cash_flow": 10,
+        "statement_date": "2026-06-30", "source": "test",
+    })
+
+    result = assess_vnext_data_eligibility(database, "2330", date(2026, 7, 20))
+
+    assert result["checks"]["financial_history"]["cash_flow_periods"] == 0
+    assert result["checks"]["point_in_time"]["ignored_future_rows"] == 1
+
+
 def test_vnext_separates_company_value_action_and_confidence(tmp_path: Path):
     database = _database_with_complete_history(tmp_path)
     for year in range(2021, 2026):

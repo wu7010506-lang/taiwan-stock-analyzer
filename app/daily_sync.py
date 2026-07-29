@@ -15,6 +15,11 @@ from app.service import sync_market_data
 from app.performance import capture_recommendation_snapshots
 from app.analysis_sync import sync_watchlist_analysis_data
 from app.vnext_model import recommend_vnext_stocks
+from app.fundamental_batch import run_fundamental_batch, run_price_history_batch
+from app.data_quality import capture_data_quality_snapshot
+from app.data_quality import build_data_quality_report
+from app.recommendation_gate import apply_formal_recommendation_gate
+from app.decision_history import capture_daily_decision_history
 
 
 def _sync_watchlist_with_retry(database: Database) -> dict:
@@ -79,6 +84,12 @@ def run_daily_close_sync(database: Database) -> dict:
         ("fundamentals", lambda: sync_screening_universe(database)),
         ("institutions", lambda: sync_all_institutional_trades(database)),
         ("watchlist_analysis", lambda: _sync_watchlist_with_retry(database)),
+        ("research_history_batch", lambda: run_fundamental_batch(
+            database, target_limit=None, batch_size=10, years=5, retry_failed=True
+        )),
+        ("research_price_history_batch", lambda: run_price_history_batch(
+            database, target_limit=None, batch_size=10, years=3, retry_failed=True
+        )),
         ("market_context", _market_context_summary),
         ("recommendation_snapshots", lambda: capture_recommendation_snapshots(
             database, get_market_context()
@@ -87,6 +98,8 @@ def run_daily_close_sync(database: Database) -> dict:
         ("data_freshness", lambda: {
             "status": "completed", "markets": database.get_market_data_freshness(),
         }),
+        ("quality_snapshot", lambda: capture_data_quality_snapshot(database)),
+        ("decision_history", lambda: _capture_decision_history(database)),
     )
     for name, operation in operations:
         steps[name] = {"status": "running"}
@@ -113,13 +126,27 @@ def run_daily_close_sync(database: Database) -> dict:
 
 
 def _capture_vnext_recommendations(database: Database) -> dict:
+    from app.recommendation_watchlist import add_top_recommendations_to_watchlist
+
     result = recommend_vnext_stocks(database, datetime.now().date(), get_market_context(), 100)
+    apply_formal_recommendation_gate(result, build_data_quality_report(database))
+    watchlist_sync = (
+        add_top_recommendations_to_watchlist(database, result, 20)
+        if result["formal_recommendation_gate"]["allowed"] else {"added": 0, "skipped": "data_quality_gate"}
+    )
     database.save_vnext_recommendation_run(
         result["as_of_date"], json.dumps(result, ensure_ascii=False, default=str)
     )
     return {"status": "completed", "as_of_date": result["as_of_date"],
             "recommendations": len(result.get("recommendations") or []),
+            "watchlist_sync": watchlist_sync,
             "universe_summary": result.get("universe_summary")}
+
+
+def _capture_decision_history(database: Database) -> dict:
+    quality = database.list_data_quality_snapshots(1)
+    return capture_daily_decision_history(database, get_market_context(),
+                                          quality[0]["id"] if quality else None)
 
 
 def _market_context_summary() -> dict:

@@ -33,18 +33,18 @@ def _market_strategy(context: dict) -> dict:
     overheat_score = float(context.get("overheat_score", 0))
     if overheat_score >= 70:
         return {"id": "extreme_overheat", "name": "過熱防守", "cash_target_percent": 60,
-                "max_new_allocation_percent": 0, "allow_small_build": False}
+                "max_total_exposure_percent": 40, "max_new_allocation_percent": 0, "allow_small_build": False}
     if market_score < 40:
         return {"id": "risk_off", "name": "防守式分批布局", "cash_target_percent": 60,
-                "max_new_allocation_percent": 2, "allow_small_build": True}
+                "max_total_exposure_percent": 40, "max_new_allocation_percent": 2, "allow_small_build": True}
     if overheat_score >= 45:
         return {"id": "overheated", "name": "獲利保護", "cash_target_percent": 40,
-                "max_new_allocation_percent": 2, "allow_small_build": False}
+                "max_total_exposure_percent": 60, "max_new_allocation_percent": 2, "allow_small_build": False}
     if market_score >= 60:
         return {"id": "risk_on", "name": "順勢成長", "cash_target_percent": 20,
-                "max_new_allocation_percent": 7, "allow_small_build": False}
+                "max_total_exposure_percent": 80, "max_new_allocation_percent": 7, "allow_small_build": False}
     return {"id": "neutral", "name": "均衡分批布局", "cash_target_percent": 30,
-            "max_new_allocation_percent": 5, "allow_small_build": False}
+            "max_total_exposure_percent": 70, "max_new_allocation_percent": 5, "allow_small_build": False}
 
 
 def _position_decision(row: dict, model_result: dict | None, market_context: dict) -> dict:
@@ -191,14 +191,14 @@ def portfolio_summary(
             database, row["symbol"], as_of_date, market_context
         )
         row["portfolio_decision"] = _position_decision(row, model_result, market_context)
-        if weight > 35:
+        if weight > 10:
             warnings.append(f"{row['symbol']} {row['name']} 占投資組合 {weight:.1f}%，集中度偏高")
         if row["stop_triggered"]:
             warnings.append(f"{row['symbol']} {row['name']} 已跌破設定停損價")
         if row["target_reached"]:
             warnings.append(f"{row['symbol']} {row['name']} 已達設定目標價")
     for item in exposure:
-        if item["weight_percent"] > 50:
+        if item["weight_percent"] > 25:
             warnings.append(f"產業 {item['industry']} 占 {item['weight_percent']:.1f}%，產業集中度偏高")
     decision_counts: dict[str, int] = defaultdict(int)
     for row in held:
@@ -225,5 +225,9 @@ def portfolio_summary(
             "market_regime": market_context.get("regime", "unknown"),
             "market_score": market_context.get("market_score"),
             "market_strategy": strategy,
+            "risk_limits": {"single_stock_limit_percent": 10,
+                            "industry_limit_percent": 25,
+                            "target_cash_percent": strategy["cash_target_percent"],
+                            "max_total_exposure_percent": strategy["max_total_exposure_percent"]},
             "decision_counts": dict(decision_counts),
             "watching_decisions": watching_decisions}

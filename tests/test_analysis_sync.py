@@ -58,3 +58,25 @@ def test_incomplete_coverage_reason_explains_a_silent_sync_shortfall():
     assert "revenues" in reason
     assert "rows=1" in reason
     assert "2026-06" in reason
+
+
+def test_recent_limited_history_does_not_retry_forever(tmp_path: Path):
+    database = Database(tmp_path / "stocks.db")
+    database.initialize()
+    database.upsert_instruments([Instrument("2072", "新上市", "TWSE", "24")])
+    today = date.today()
+    database.upsert_prices([DailyPrice(
+        "2072", "TWSE", today, Decimal("100"), Decimal("101"),
+        Decimal("99"), Decimal("100"), 1000,
+    )])
+    with database.connect() as connection:
+        connection.execute(
+            """INSERT INTO analysis_sync_state(symbol,dataset,last_attempt,status,error)
+               VALUES('2072','prices',CURRENT_TIMESTAMP,'limited','short history')"""
+        )
+
+    plan = analysis_sync_plan(database, "2072")
+
+    assert "prices" not in plan["missing"]
+    assert plan["coverage"]["prices"]["ready"] is True
+    assert plan["coverage"]["prices"]["history_sufficient"] is False
