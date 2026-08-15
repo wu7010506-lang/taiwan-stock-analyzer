@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="檢查台股研究台各資料集的日期、覆蓋率與同步錯誤">
+  <title>資料品質｜台股研究台</title>
+  <link rel="stylesheet" href="/static/styles.css?v=20260727-data-quality">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/recommendations/"><span class="brand-mark">TW</span><span>台股研究台</span></a>
+    <div class="top-actions">
+      <a href="/alerts/" class="text-link nav-link">提醒中心</a>
+      <a href="/watchlist/" class="text-link nav-link">我的股票</a>
+      <a href="/recommendations/" class="text-link nav-link">股票推薦</a>
+      <a href="/screener/" class="text-link nav-link">所有股票</a>
+      <a href="/performance/" class="text-link nav-link">模型成績／回測</a>
+      <a href="/data-quality/" class="text-link nav-link active" aria-current="page">資料品質</a>
+    </div>
+  </header>
+  <main class="shell">
+    <section class="intro data-quality-intro">
+      <div><p class="eyebrow">DATA RELIABILITY</p><h1>資料品質中心</h1><p>先確認日期、覆蓋率與同步錯誤，再採用推薦與買賣建議。</p></div>
+      <div class="quality-actions">
+        <button id="syncAllFinancialsButton" class="button" type="button">補齊下一批完整財報</button>
+        <button id="snapshotQualityButton" class="button secondary" type="button">保存品質快照</button>
+        <button id="reloadQualityButton" class="button secondary" type="button">重新檢查</button>
+      </div>
+    </section>
+    <section id="qualitySummary" class="quality-summary" aria-live="polite"></section>
+    <section class="table-card">
+      <div class="section-heading"><div><p class="eyebrow">MARKET COVERAGE</p><h2>市場資料覆蓋率</h2></div></div>
+      <div class="table-scroll"><table><thead><tr><th>市場</th><th>資料</th><th>最新日期</th><th>覆蓋</th><th>覆蓋率</th><th>落後股票</th></tr></thead><tbody id="coverageRows"></tbody></table></div>
+    </section>
+    <section class="table-card">
+      <div class="section-heading"><div><p class="eyebrow">AUTOMATIC QUARANTINE</p><h2>自動隔離名單</h2><p id="quarantineSummary">正在檢查未對齊最新交易日的股票…</p></div></div>
+      <div class="table-scroll"><table><thead><tr><th>市場</th><th>目標交易日</th><th>隔離檔數</th><th>部分名單</th></tr></thead><tbody id="quarantineRows"></tbody></table></div>
+      <p class="unit-note">隔離只阻止股票進入當日排行榜與操作候選，不會刪除舊資料；同步完成後會自動解除。</p>
+    </section>
+    <section class="quality-layout">
+      <article class="table-card"><div class="section-heading"><div><p class="eyebrow">SYNC QUEUES</p><h2>批次補齊進度</h2></div></div><div id="queueCards" class="quality-queue-grid"></div><p id="financialBatchMessage" class="muted"></p></article>
+      <article class="table-card"><div class="section-heading"><div><p class="eyebrow">ACTION REQUIRED</p><h2>需要處理的問題</h2></div></div><div id="qualityIssues" class="quality-issues"></div></article>
+    </section>
+    <section class="table-card">
+      <div class="section-heading"><div><p class="eyebrow">DATA CONTRACTS</p><h2>正式推薦資料契約</h2></div></div>
+      <div class="table-scroll"><table><thead><tr><th>市場／資料</th><th>門檻</th><th>目前覆蓋率</th><th>最新日期</th><th>結果</th></tr></thead><tbody id="contractRows"></tbody></table></div>
+      <p id="snapshotMessage" class="muted"></p>
+    </section>
+    <section class="table-card quality-source-card">
+      <div class="section-heading"><div><p class="eyebrow">SOURCE POLICY</p><h2>資料來源與替代策略</h2></div></div>
+      <div class="table-scroll"><table><thead><tr><th>資料</th><th>主要來源</th><th>替代方案</th><th>正式建議規則</th></tr></thead><tbody id="sourceRows"></tbody></table></div>
+    </section>
+    <p class="warning-copy quality-policy">資料不足或過期的股票不得以預設分數代替；正式推薦必須通過資料完整度與新鮮度檢查。</p>
+  </main>
+  <script src="/static/data-quality.js?v=20260815-quarantine-1"></script><script src="/static/global-sync.js?v=20260804-nav"></script>
+</body>
+</html>

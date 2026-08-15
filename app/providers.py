@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -15,7 +16,7 @@ class ProviderError(RuntimeError):
 
 
 def _number(value: Any) -> Decimal:
-    text = str(value or "0").replace(",", "").strip()
+    text = str(value or "0").replace(",", "").strip().rstrip("*")
     if text in {"", "--", "---", "-"}:
         return Decimal(0)
     try:
@@ -29,7 +30,8 @@ def _integer(value: Any) -> int:
 
 
 def _parse_date(value: str) -> date:
-    text = value.strip().replace("/", "-")
+    # Official tables sometimes append * as a footnote marker to the date.
+    text = value.strip().rstrip("*").strip().replace("/", "-")
     if text.isdigit() and len(text) == 7:
         return date(int(text[:3]) + 1911, int(text[3:5]), int(text[5:7]))
     if text.isdigit() and len(text) == 8:
@@ -40,6 +42,29 @@ def _parse_date(value: str) -> date:
     return datetime.strptime(text, "%Y-%m-%d").date()
 
 
+def _get_twse_history_response(client: httpx.Client, url: str) -> httpx.Response:
+    """Fetch a TWSE history page, including a defensive redirect retry.
+
+    The normal ``follow_redirects`` path handles the exchange's 307 response.
+    Some transient CDN responses have nevertheless reached the caller as a
+    redirect, so follow at most two same-domain locations explicitly before
+    treating the monthly history as unavailable.
+    """
+    response = client.get(url, follow_redirects=True)
+    for _ in range(2):
+        if not response.is_redirect:
+            return response
+        location = response.headers.get("location")
+        if not location:
+            return response
+        target = urljoin(str(response.url), location)
+        hostname = urlparse(target).hostname or ""
+        if not hostname.endswith("twse.com.tw"):
+            raise ProviderError("TWSE history redirect left the official domain")
+        response = client.get(target, follow_redirects=True)
+    return response
+
+
 class MarketProvider(ABC):
     market: str
 
@@ -48,7 +73,7 @@ class MarketProvider(ABC):
 
     def _get(self, url: str) -> list[dict[str, Any]]:
         try:
-            response = self.client.get(url, follow_redirects=True)
+            response = _get_twse_history_response(self.client, url)
             response.raise_for_status()
             payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:
@@ -114,7 +139,7 @@ class TwseProvider(MarketProvider):
             f"?date={month:%Y%m}01&stockNo={symbol}&response=json"
         )
         try:
-            response = self.client.get(url, follow_redirects=True)
+            response = _get_twse_history_response(self.client, url)
             response.raise_for_status()
             payload = response.json()
         except (httpx.HTTPError, ValueError) as exc:

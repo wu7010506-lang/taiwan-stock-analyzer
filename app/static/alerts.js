@@ -2,14 +2,20 @@ const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const READ_KEY = "tw-stock-alerts-read";
 let alerts = [];
+let decisions = [];
 let severity = "all";
+let decisionMode = localStorage.getItem("tw-stock-alert-mode") || "short";
 
 async function api(url) {
   const response = await fetch(url);
-  const data = await response.json();
-  if (!response.ok) throw new Error(data.detail || `伺服器錯誤（${response.status}）`);
+  const text = await response.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch { /* retain readable HTTP error below */ }
+  if (!response.ok) throw new Error(data?.detail || `伺服器錯誤（${response.status}）${text && !data ? `：${text.slice(0, 120)}` : ""}`);
+  if (data == null) throw new Error("伺服器回傳的資料格式不正確");
   return data;
 }
+function number(value) { return value == null ? "—" : Number(value).toLocaleString("zh-TW", { maximumFractionDigits: 1 }); }
 
 function readAlerts() {
   try { return new Set(JSON.parse(localStorage.getItem(READ_KEY) || "[]")); }
@@ -49,7 +55,7 @@ function renderAlerts() {
     </article>`;
   }).join("");
   $$("#alertGrid .alert-card").forEach(card => {
-    const open = () => location.href = `/?symbol=${encodeURIComponent(card.dataset.symbol)}`;
+    const open = () => location.href = `/stock/?symbol=${encodeURIComponent(card.dataset.symbol)}`;
     card.addEventListener("click", open);
     card.addEventListener("keydown", event => { if (event.key === "Enter") open(); });
     card.querySelector(".mark-read").addEventListener("click", event => {
@@ -69,16 +75,38 @@ function renderSummary(data) {
   $("#alertCategory").innerHTML = `<option value="">全部類別</option>${categories.map(value => `<option value="${value}">${value}</option>`).join("")}`;
 }
 
+function renderDecisions() {
+  $("#decisionGrid").innerHTML = decisions.map(item => `<article class="decision-card ${item.tone}" data-symbol="${item.symbol}" tabindex="0" role="link">
+    <div><small>${item.symbol} ${item.name}</small><strong>${item.action}</strong></div><b>${number(item.score)}<i>分</i></b>
+    <span>${item.horizon} · 信心度 ${item.confidence} · ${item.evidence_count} 類證據${item.industry_model ? ` · ${item.industry_model}` : ""}</span>
+    <ul>${item.positive_reasons.map(reason => `<li class="positive">${reason}</li>`).join("")}${item.risk_reasons.map(reason => `<li class="negative">${reason}</li>`).join("")}</ul>
+  </article>`).join("") || `<p class="muted">請先在「我的股票」加入要監控的股票。</p>`;
+  $$("#decisionGrid .decision-card").forEach(card => {
+    const open = () => location.href = `/stock/?symbol=${encodeURIComponent(card.dataset.symbol)}`;
+    card.addEventListener("click", open); card.addEventListener("keydown", event => { if (event.key === "Enter") open(); });
+  });
+}
+
 async function loadAlerts() {
   const button = $("#reloadAlertsButton");
   button.disabled = true; button.textContent = "檢查中…";
   try {
-    const data = await api("/alerts");
+    const data = await api(`/alerts?mode=${decisionMode}`);
     alerts = data.alerts;
+    decisions = data.decisions || [];
     renderSummary(data);
+    renderDecisions();
     renderAlerts();
   } catch (error) { $("#alertStatus").textContent = error.message; }
   finally { button.disabled = false; button.textContent = "重新檢查"; }
+}
+
+function renderMode() {
+  $$('[data-mode]').forEach(button => button.classList.toggle("active", button.dataset.mode === decisionMode));
+  const isShort = decisionMode === "short";
+  $("#modeDescription").textContent = isShort ? "短線模式：觀察數日至數週的價格、量能、法人與市場時機。" : "長線模式：觀察一年以上的企業品質、現金流、估值、產業風險與失效條件。";
+  $("#decisionTitle").textContent = isShort ? "短線買賣傾向" : "長線買賣傾向";
+  $("#decisionDescription").textContent = isShort ? "依價格動能、量能、法人流向、營收、估值與整體市場判斷。" : "依五年企業品質、現金流、持續獲利、歷史估值、產業模型與市場狀態判斷。";
 }
 
 async function checkHealth() {
@@ -97,4 +125,8 @@ $("#alertSearch").addEventListener("input", renderAlerts);
 $("#unreadOnly").addEventListener("change", renderAlerts);
 $("#markAllRead").addEventListener("click", () => { saveRead(new Set(alerts.map(alertId))); renderAlerts(); });
 $("#reloadAlertsButton").addEventListener("click", loadAlerts);
-checkHealth(); loadAlerts();
+$$('[data-mode]').forEach(button => button.addEventListener("click", () => {
+  decisionMode = button.dataset.mode; localStorage.setItem("tw-stock-alert-mode", decisionMode);
+  renderMode(); loadAlerts();
+}));
+renderMode(); checkHealth(); loadAlerts();

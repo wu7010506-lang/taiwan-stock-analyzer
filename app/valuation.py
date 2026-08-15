@@ -22,9 +22,9 @@ def _decimal(value: object) -> Decimal | None:
         raise ProviderError(f"估值數值格式異常：{value!r}") from exc
 
 
-def fetch_valuation_date(
-    client: httpx.Client, symbol: str, market: str, target: date
-) -> dict | None:
+def fetch_valuation_snapshot(
+    client: httpx.Client, market: str, target: date
+) -> dict[str, dict]:
     if market == "TWSE":
         url = (
             "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d"
@@ -44,40 +44,52 @@ def fetch_valuation_date(
 
     if market == "TWSE":
         if payload.get("stat") != "OK":
-            return None
-        row = next((item for item in payload.get("data", []) if item[0] == symbol), None)
-        if not row:
-            return None
+            return {}
+        valuation_date = payload.get("date", target.strftime("%Y%m%d"))
         return {
-            "symbol": symbol,
-            "market": market,
-            "valuation_date": payload.get("date", target.strftime("%Y%m%d")),
-            "close_price": _decimal(row[2]),
-            "dividend_yield": _decimal(row[3]),
-            "dividend_year": str(row[4]),
-            "pe_ratio": _decimal(row[5]),
-            "pb_ratio": _decimal(row[6]),
-            "financial_period": str(row[7]),
+            str(row[0]).strip(): {
+                "symbol": str(row[0]).strip(),
+                "market": market,
+                "valuation_date": valuation_date,
+                "close_price": _decimal(row[2]),
+                "dividend_yield": _decimal(row[3]),
+                "dividend_year": str(row[4]).strip() or None,
+                "pe_ratio": _decimal(row[5]),
+                "pb_ratio": _decimal(row[6]),
+                "financial_period": str(row[7]).strip() or None,
+            }
+            for row in payload.get("data", [])
+            if len(row) > 7 and str(row[0]).strip()
         }
 
     tables = payload.get("tables") or []
     if not tables:
-        return None
-    row = next((item for item in tables[0].get("data", []) if item[0] == symbol), None)
-    if not row:
-        return None
+        return {}
+    valuation_date = _parse_date(
+        tables[0].get("date", target.isoformat())
+    ).strftime("%Y%m%d")
     return {
-        "symbol": symbol,
-        "market": market,
-        "valuation_date": _parse_date(tables[0].get("date", target.isoformat())).strftime("%Y%m%d"),
-        "close_price": None,
-        "pe_ratio": _decimal(row[2]),
-        "dividend_per_share": _decimal(row[3]),
-        "dividend_year": str(row[4]),
-        "dividend_yield": _decimal(row[5]),
-        "pb_ratio": _decimal(row[6]),
-        "financial_period": str(row[7]),
+        str(row[0]).strip(): {
+            "symbol": str(row[0]).strip(),
+            "market": market,
+            "valuation_date": valuation_date,
+            "close_price": None,
+            "pe_ratio": _decimal(row[2]),
+            "dividend_per_share": _decimal(row[3]),
+            "dividend_year": str(row[4]).strip() or None,
+            "dividend_yield": _decimal(row[5]),
+            "pb_ratio": _decimal(row[6]),
+            "financial_period": str(row[7]).strip() or None,
+        }
+        for row in tables[0].get("data", [])
+        if len(row) > 7 and str(row[0]).strip()
     }
+
+
+def fetch_valuation_date(
+    client: httpx.Client, symbol: str, market: str, target: date
+) -> dict | None:
+    return fetch_valuation_snapshot(client, market, target).get(symbol)
 
 
 def _percentile(values: list[float], current: float | None) -> float | None:
@@ -94,15 +106,27 @@ def sync_valuations(database: Database, symbol: str, start: str, end: str) -> di
     today = date.today()
     written = 0
     missing = 0
+    with database.connect() as connection:
+        market_dates = [row[0] for row in connection.execute(
+            """SELECT DISTINCT trade_date FROM daily_prices
+               WHERE market=? AND trade_date BETWEEN ? AND ? ORDER BY trade_date""",
+            (instrument["market"], f"{start}-01", f"{end}-31"),
+        )]
+    last_trading_date = {}
+    for value in market_dates:
+        last_trading_date[value[:7]] = date.fromisoformat(value)
     headers = {"User-Agent": settings.user_agent, "Accept": "application/json"}
     with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers, follow_redirects=True) as client:
         for year, month in months:
             last_day = calendar.monthrange(year, month)[1]
             target = min(date(year, month, last_day), today)
             row = None
-            # 月底若為週末、假日或當月尚未收盤，向前尋找最近有資料的交易日。
-            for offset in range(min(15, target.day)):
-                candidate = target - timedelta(days=offset)
+            known_trading_date = last_trading_date.get(f"{year:04d}-{month:02d}")
+            # Prefer the locally known market calendar: one official request per month.
+            candidates = ([known_trading_date] if known_trading_date else
+                          [target - timedelta(days=offset)
+                           for offset in range(min(15, target.day))])
+            for candidate in candidates:
                 row = fetch_valuation_date(
                     client, symbol, instrument["market"], candidate
                 )

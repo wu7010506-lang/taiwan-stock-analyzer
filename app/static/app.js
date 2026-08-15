@@ -3,6 +3,7 @@ const state = {
   stock: null, prices: [], analysis: null, revenues: [], revenueAnalysis: null,
   valuations: [], valuationAnalysis: null, financials: [], financialAnalysis: null,
   dividends: [], ownership: null, institutions: [], company: null, score: null,
+  technical: null, shortTermAnalysis: null, shortTermPosition: null,
   autoSyncedSymbols: new Set(),
 };
 let toastTimer;
@@ -145,44 +146,35 @@ async function autoSyncStockData(symbol) {
   if (state.autoSyncedSymbols.has(symbol)) return;
   state.autoSyncedSymbols.add(symbol);
 
-  const endDate = new Date();
-  const startDate = new Date(endDate);
-  startDate.setFullYear(startDate.getFullYear() - 1);
-  const start = localDate(startDate);
-  const end = localDate(endDate);
-  const startMonth = start.slice(0, 7);
-  const endMonth = end.slice(0, 7);
   const messages = ["#syncMessage", "#revenueSyncMessage", "#valuationSyncMessage", "#financialSyncMessage", "#dividendSyncMessage", "#ownershipSyncMessage", "#institutionSyncMessage"];
-  messages.forEach(selector => $(selector).textContent = "選取股票後自動同步中…");
-  toast("正在自動更新近 1 年資料…");
-
-  const requests = [
-    api(`/history/sync?${new URLSearchParams({ symbol, start, end })}`, { method: "POST" }),
-    api(`/revenue/sync?${new URLSearchParams({ symbol, start: startMonth, end: endMonth })}`, { method: "POST" }),
-    api(`/valuation/sync?${new URLSearchParams({ symbol, start: startMonth, end: endMonth })}`, { method: "POST" }),
-    api(`/financials/sync?${new URLSearchParams({ symbol })}`, { method: "POST" }),
-    api(`/dividends/sync?${new URLSearchParams({ symbol })}`, { method: "POST" }),
-    api(`/ownership/sync?${new URLSearchParams({ symbol })}`, { method: "POST" }),
-    api(`/institutions/sync?${new URLSearchParams({ symbol })}`, { method: "POST" }),
-  ];
-  const results = await Promise.allSettled(requests);
   const labels = ["行情", "營收", "估值", "財報", "股利與除權息", "股權分散", "法人買賣"];
-  const succeeded = results.filter(result => result.status === "fulfilled").length;
-  results.forEach((result, index) => {
-    $(messages[index]).textContent = result.status === "fulfilled"
-      ? `自動同步完成（近 1 年${labels[index]}）`
-      : `自動同步未完成：${result.reason.message}`;
+  let plan;
+  try { plan = await api(`/stocks/${encodeURIComponent(symbol)}/sync-plan`); }
+  catch (error) { toast(error.message, true); return; }
+  if (plan.ready) {
+    messages.forEach((selector, index) => $(selector).textContent = `${labels[index]}資料已是最新，不需重複同步`);
+    return;
+  }
+  messages.forEach((selector, index) => $(selector).textContent = plan.missing.includes(["prices", "revenues", "valuations", "financials", "dividends", "ownership", "institutions"][index]) ? "資料缺少或過期，正在補齊…" : `${labels[index]}資料已是最新`);
+  toast(`正在補齊 ${plan.missing.map(name => ({prices:"行情",revenues:"營收",valuations:"估值",financials:"財報",dividends:"股利",ownership:"股權",institutions:"法人"})[name]).join("、")}…`);
+  let result;
+  try { result = await api(`/stocks/${encodeURIComponent(symbol)}/sync-missing`, { method: "POST" }); }
+  catch (error) { toast(error.message, true); return; }
+  const keys = ["prices", "revenues", "valuations", "financials", "dividends", "ownership", "institutions"];
+  keys.forEach((key, index) => {
+    const item = result.results[key];
+    $(messages[index]).textContent = !item ? `${labels[index]}資料已是最新` : item.status === "failed" ? `自動同步未完成：${item.error}` : `自動同步完成（${labels[index]}）`;
   });
   if (state.stock?.symbol !== symbol) return;
   await loadStock();
-  const failed = labels.length - succeeded;
-  toast(failed ? `自動更新完成 ${succeeded} 項，${failed} 項未完成` : "近 1 年資料已自動更新", failed > 0);
+  const failed = result.remaining.length;
+  toast(failed ? `資料已更新，但仍有 ${failed} 項缺漏` : "缺少的資料已補齊", failed > 0);
 }
 
 async function loadStock() {
   const symbol = state.stock.symbol;
   try {
-    const [prices, analysis, revenues, revenueAnalysis, valuations, valuationAnalysis, financials, financialAnalysis, dividends, ownership, institutions, company, score] = await Promise.all([
+    const [prices, analysis, revenues, revenueAnalysis, valuations, valuationAnalysis, financials, financialAnalysis, dividends, ownership, institutions, company, score, technical, shortTermAnalysis, shortTermPositions] = await Promise.all([
       api(`/stocks/${symbol}/prices?limit=1000`).catch(() => []),
       api(`/stocks/${symbol}/analysis`).catch(() => null),
       api(`/stocks/${symbol}/revenue?limit=60`).catch(() => []),
@@ -196,6 +188,9 @@ async function loadStock() {
       api(`/stocks/${symbol}/institutions?limit=60`).catch(() => []),
       api(`/stocks/${symbol}/company`).catch(() => null),
       api(`/stocks/${symbol}/score`).catch(() => null),
+      api(`/stocks/${symbol}/technical?limit=300`).catch(() => null),
+      api(`/stocks/${symbol}/short-analysis`).catch(() => null),
+      api("/short-term-positions").catch(() => ({ positions: [] })),
     ]);
     state.prices = prices;
     state.analysis = analysis;
@@ -210,8 +205,14 @@ async function loadStock() {
     state.institutions = institutions;
     state.company = company;
     state.score = score;
+    state.technical = technical;
+    state.shortTermAnalysis = shortTermAnalysis;
+    state.shortTermPosition = (shortTermPositions.positions || []).find(position => position.symbol === symbol) || null;
     renderQuote();
     renderAnalysis();
+    renderTechnicalIndicators();
+    renderShortTermAnalysis();
+    renderShortPositionControl();
     renderTable();
     scheduleChartDraw();
     renderRevenue();
@@ -534,6 +535,171 @@ function renderAnalysis() {
   `).join("");
 }
 
+function renderTechnicalIndicators() {
+  const technical = state.technical;
+  const grid = $("#technicalIndicatorGrid");
+  const note = $("#technicalIndicatorNote");
+  if (!technical) {
+    grid.innerHTML = '<div class="technical-unavailable">技術指標資料不足或尚未同步。</div>';
+    note.textContent = "資料不足不會被當成中性訊號。";
+    return;
+  }
+  const values = technical.indicators || {};
+  const labels = [
+    ["SMA 20", "sma_20"], ["SMA 60", "sma_60"], ["RSI 14", "rsi_14"],
+    ["MACD", "macd"], ["MACD signal", "macd_signal"], ["ATR 14", "atr_14"],
+    ["Bollinger upper", "bollinger_upper"], ["Bollinger lower", "bollinger_lower"],
+    ["ADX 14", "adx_14"], ["+DI 14", "plus_di_14"], ["-DI 14", "minus_di_14"],
+    ["NATR 14", "natr_14"], ["MFI 14", "mfi_14"],
+    ["Keltner upper", "keltner_upper_20"], ["Keltner lower", "keltner_lower_20"],
+    ["Volume / 20d", "volume_ratio_20"], ["Distance to 60d high", "distance_to_60d_high_percent"],
+    ["20d breakout", "breakout_20d"], ["Volume confirmed", "volume_confirmation_20d"],
+    ["Trend confirmed", "trend_confirmation"],
+  ];
+  grid.innerHTML = labels.map(([label, key]) => {
+    const value = values[key];
+    const display = value === null || value === undefined ? "資料不足" :
+      key === "distance_to_60d_high_percent" ? `${formatNumber(value)}%` : formatNumber(value);
+    return `<div class="technical-indicator ${value == null ? "is-unavailable" : ""}"><span>${label}</span><strong>${display}</strong></div>`;
+  }).join("");
+  const available = Object.entries(technical.availability || {}).filter(([, value]) => value).map(([key]) => key);
+  note.textContent = `資料截至 ${technical.as_of || "未知"}，使用 ${technical.input_rows || 0} 筆日資料；可用面向：${available.join("、") || "無"}。技術指標僅描述價格行為，並不保證未來報酬。`;
+}
+
+function renderShortTermAnalysis() {
+  const target = $("#shortTermAnalysisContent");
+  const report = state.shortTermAnalysis?.short_term_report;
+  if (!report) {
+    target.innerHTML = '<p class="dashboard-empty">短線分析需要至少 60 筆日 OHLCV 資料；目前不產生中性替代訊號。</p>';
+    return;
+  }
+  const trend = report.trend || {};
+  const levels = report.support_resistance || {};
+  const indicators = report.indicators || {};
+  const plan = report.trading_plan || {};
+  const conclusion = report.plain_conclusion || {};
+  const scenarios = report.scenarios || {};
+  const market = state.shortTermAnalysis?.short_term_market || {};
+  const number = value => value == null ? "資料不足" : formatNumber(value);
+  const percent = value => value == null ? "資料不足" : `${formatNumber(value)}%`;
+  const kd = indicators.kd || {};
+  const bollinger = indicators.bollinger || {};
+  const labels = {
+    bullish: "偏多", bearish: "偏空", range_or_transition: "盤整／轉換中",
+    higher_high_higher_low: "高點、低點墊高", lower_high_lower_low: "高點、低點下移", mixed_or_range: "結構混合／區間整理",
+    strong: "強", moderate: "中等", weak: "弱", weak_or_mixed: "偏弱／訊號混合", elevated: "升高", contained: "受控", normal: "一般",
+    confirmed: "量能確認", contracted: "量縮", neutral: "中性", long_upper_shadow: "長上影線", long_lower_shadow: "長下影線", doji: "十字線",
+    bullish_engulfing: "多頭吞沒", bearish_engulfing: "空頭吞沒", bullish_body: "紅 K", bearish_body: "黑 K",
+    selling_pressure_or_failed_chase_risk: "賣壓增加／追價失敗風險", support_test_requires_confirmation: "測試支撐，仍需確認",
+    potential_reversal_requires_volume_and_structure_confirmation: "可能轉折，仍須量能與結構確認", single_candle_not_a_standalone_signal: "單一 K 線不足以單獨判斷",
+    bullish_cross: "黃金交叉", bearish_cross: "死亡交叉", above_upper: "突破布林上軌", below_lower: "跌破布林下軌", inside_bands: "布林通道內",
+    unavailable_no_intraday_data: "未提供正式分 K 資料", wait_for_confirmation: "等待確認", research_ready_if_confirmed: "確認條件後可研究",
+    below_1_to_1_5_or_unavailable: "低於 1：1.5 或資料不足", meets_minimum_research_threshold: "達到研究門檻",
+    daily_close_above_resistance_1_and_volume_at_least_1_2x_20d: "日收盤突破第一壓力，且成交量至少為 20 日均量 1.2 倍",
+    close_above_resistance_1_with_volume_confirmation: "收盤突破第一壓力，且量能確認", price_remains_between_support_1_and_resistance_1: "價格持續在第一支撐與第一壓力間", daily_close_below_support_1: "日收盤跌破第一支撐",
+    wait: "等待", trend_and_macd_conflict: "趨勢與 MACD 訊號衝突", trend_but_rsi_overbought: "趨勢偏多但 RSI 過熱",
+  };
+  const text = value => labels[value] || value || "資料不足";
+  const actualRr = plan.cost_adjusted_risk_reward;
+  const independentTarget = plan.planned_target;
+  const requiredRr = plan.required_rr;
+  const overextension = plan.overextension_check || {};
+  const chaseControl = plan.trigger_checks?.chase_control || {};
+  const meetsRr15 = actualRr != null && actualRr >= 1.5;
+  const finalReasons = [];
+  if (plan.reference_entry != null && plan.breakout_level != null && Number(plan.reference_entry) <= Number(plan.breakout_level)) finalReasons.push("尚未突破 20 日高點。");
+  if (plan.mfi_check?.result === "偏熱") finalReasons.push(`MFI（${number(plan.mfi_check?.value)}）高於 ${number(plan.mfi_check?.hot_threshold)}，市場偏熱。`);
+  if (plan.natr_check?.result === "過高") finalReasons.push(`NATR（${number(plan.natr_check?.value_percent)}%）高於 ${number(plan.natr_check?.high_threshold_percent)}%，波動過大。`);
+  if (actualRr == null || requiredRr == null || Number(actualRr) < Number(requiredRr)) finalReasons.push(`若本策略設定最低 RR 為 1：${number(requiredRr)}，目前獨立推導目標的成本後 RR 僅有 1：${number(actualRr)}，不符合策略要求。`);
+  if (!finalReasons.length && (plan.blocking_reasons || []).length) finalReasons.push(...plan.blocking_reasons);
+  const overallReasons = conclusion.answer_code === "avoid" && (conclusion.missing_conditions || []).length
+    ? conclusion.missing_conditions
+    : finalReasons;
+  const numberedReasons = overallReasons.map((reason, index) => `${"①②③④⑤⑥"[index] || `${index + 1}.`} ${reason}`).join("<br>");
+  const conclusionClass = conclusion.answer_code === "conditional" ? "accumulate" : conclusion.answer_code === "avoid" ? "sell" : "wait";
+  const conclusionReasons = conclusion.missing_conditions || [];
+  const simpleReasons = conclusionReasons.join("；") === conclusion.summary
+    ? ""
+    : conclusionReasons.map(reason => `<li>${reason}</li>`).join("");
+  const pricePlan = conclusion.reference_prices;
+  const simplePricePlan = pricePlan ? `<div class="short-conclusion-prices"><span>最高進場 <strong>${number(pricePlan.maximum_entry)}</strong></span><span>停損參考 <strong>${number(pricePlan.stop)}</strong></span><span>目標參考 <strong>${number(pricePlan.target)}</strong></span><span>成本後 RR <strong>1：${number(pricePlan.cost_adjusted_rr)}</strong></span></div>` : "";
+  const conclusionCard = `<article id="plainShortConclusion" class="dashboard-action-card short-conclusion-card ${conclusionClass}"><div><span class="short-conclusion-label">白話結論｜資料日 ${conclusion.data_date || report.as_of || "未知"}</span><strong>${conclusion.headline || "短線結論資料不足"}</strong><p>${conclusion.summary || "目前無法形成白話結論。"}</p>${simpleReasons ? `<ul>${simpleReasons}</ul>` : ""}${simplePricePlan}<small><b>接下來：</b>${conclusion.next_step || "等待資料更新。"}</small><small>${conclusion.scope || "只供短線技術研究，不保證報酬。"}</small></div></article>`;
+  const rows = [
+    ["一、趨勢", `短／中／長期：${trend.short || "資料不足"}／${trend.medium || "資料不足"}／${trend.long || "資料不足"}；價格結構：${trend.structure || "資料不足"}；趨勢強度：${trend.strength || "資料不足"}。MA5／10／20／60：${number(trend.moving_averages?.ma_5)}／${number(trend.moving_averages?.ma_10)}／${number(trend.moving_averages?.ma_20)}／${number(trend.moving_averages?.ma_60)}。`],
+    ["二、支撐與壓力", `第一支撐 ${number(levels.support_1)}；第二支撐 ${number(levels.support_2)}；第一壓力 ${number(levels.resistance_1)}；第二壓力 ${number(levels.resistance_2)}。依據：MA20／MA60 或近期低點，以及前 20／55 日高點。`],
+    ["三、成交量", `相對 20 日量 ${number(report.volume?.relative_to_20d)} 倍；狀態：${report.volume?.state || "資料不足"}；單日價格變動 ${percent(report.volume?.price_change_percent)}。量價確認不足時，不把突破視為成立。`],
+    ["四、K 線", `最近型態：${report.candlestick?.pattern || "資料不足"}。解讀：${report.candlestick?.meaning || "資料不足"}。單一 K 線不會單獨觸發交易計畫。`],
+    ["五、技術指標", `MACD：${indicators.macd_state || "資料不足"}（柱狀體 ${number(indicators.macd_histogram)}）；RSI14：${number(indicators.rsi_14)}；KD：K ${number(kd.k)}／D ${number(kd.d)}（${kd.signal || "資料不足"}）；布林：${bollinger.position || "資料不足"}。${(indicators.conflicts || []).length ? `衝突：${indicators.conflicts.join("、")}。` : "目前未偵測到此規則集定義的指標衝突。"}`],
+    ["六、多週期", `日 K：${report.multi_timeframe?.daily || "資料不足"}；週 K：${report.multi_timeframe?.weekly || "資料不足"}；60 分鐘與 15 分鐘：目前沒有正式分 K 資料，因此不判斷。`],
+    ["七、強弱評估", `多方：${report.strength?.bulls || "資料不足"}；空方：${report.strength?.bears || "資料不足"}；追價風險：${report.strength?.chase_risk || "資料不足"}。`],
+    ["八、純技術交易評估", `此區只驗證技術計畫，不會覆蓋基本面門檻。<br>✓ 目前每股風險：${number(plan.math_verification?.risk)} 元<br>✓ 獨立推導目標：${number(independentTarget)} 元（${plan.planned_target_basis || "資料不足"}）<br>✓ 獨立目標的成本後風險報酬比：1：${number(actualRr)}<br>✓ 若策略要求最低 RR 為 1：1.5，本交易${meetsRr15 ? "符合" : "不符合"}。<br>${chaseControl.passed === false ? `✗ 追價控制未通過：短線漲幅與乖離過度延伸（5 日 ${percent(overextension.return_5d_percent)}；高於 MA5 ${percent(overextension.distance_to_sma5_percent)}；高於 MA20 ${percent(overextension.distance_to_sma20_percent)}）。` : "✓ 追價控制未偵測到複合過度延伸。"}<br>✓ 成本後最低 RR 所需價：${number(plan.minimum_target_required_rr_after_cost)} 元；此數字只是門檻，不是預測目標。<br>✓ 若毛 RR 為 1：2，目標至少需 ${number(plan.math_verification?.rr_2_target)} 元；若為 1：3，至少需 ${number(plan.math_verification?.rr_3_target)} 元。`],
+    ["九、整體判定", `<strong>${conclusion.headline || plan.status || "資料不足"}</strong><br>原因：<br>${numberedReasons || "目前未偵測到固定規則的阻擋原因；開盤前仍須重算。"}`],
+    ["十、計算依據", `大盤狀態：${market.mode || report.market_mode || "資料不足"}（市場分數 ${number(market.market_score)}、20 日指數變動 ${percent(market.index_change_20d)}），最低 RR 為 1：${number(requiredRr)}。參考進場 ${number(plan.reference_entry)}；最高允許進場 ${number(plan.maximum_entry_price)}，公式：${plan.maximum_entry_formula || "資料不足"}（ATR14 ${number(plan.maximum_entry_parameters?.atr_14)} × ${number(plan.maximum_entry_parameters?.chase_atr_multiple)}）。突破 K 棒低點 ${number(plan.stop_candidates?.breakout_candle_low)}；1.5 ATR 停損 ${number(plan.stop_candidates?.atr_1_5_stop)}；採用停損 ${number(plan.stop)}。MFI ${number(plan.mfi_check?.value)}／門檻 ${number(plan.mfi_check?.hot_threshold)}：${plan.mfi_check?.result || "資料不足"}；NATR ${number(plan.natr_check?.value_percent)}%／門檻 ${number(plan.natr_check?.high_threshold_percent)}%：${plan.natr_check?.result || "資料不足"}。`],
+    ["十一、情境", `偏多：${scenarios.bullish?.condition || "資料不足"}，下一目標 ${number(scenarios.bullish?.next_target)}。中性：${scenarios.neutral?.condition || "資料不足"}，策略 ${scenarios.neutral?.action || "等待"}。偏空：${scenarios.bearish?.condition || "資料不足"}，下一支撐 ${number(scenarios.bearish?.next_support)}。`],
+    ["十二、限制與風險", `資料日期 ${report.as_of || "未知"}。${(report.limitations || []).join(" ")} 技術分析不是報酬保證；消息、財報、政策、跳空與實際成交價格都可能改變結果。`],
+  ];
+  target.innerHTML = conclusionCard + rows.map(([title, detail]) => `<article class="dashboard-action-card wait"><div><strong>${title}</strong><small>${detail}</small></div></article>`).join("");
+}
+
+function renderShortPositionControl() {
+  const button = $("#recordShortPositionButton");
+  const status = $("#shortPositionStatus");
+  const localEditing = ["127.0.0.1", "localhost", "::1"].includes(window.location.hostname);
+  if (state.shortTermPosition) {
+    const position = state.shortTermPosition;
+    button.hidden = true;
+    status.textContent = `已追蹤短線持倉｜剩餘 ${formatNumber(position.remaining_shares, 0)} 股｜${position.decision?.label || "每日檢查中"}`;
+    return;
+  }
+  button.hidden = !localEditing;
+  status.textContent = localEditing ? "3–10 個交易日研究｜可登記任何已買股票" : "3–10 個交易日研究｜公開頁面僅供查看";
+}
+
+function openIndividualPurchaseDialog() {
+  if (!state.stock) return;
+  const report = state.shortTermAnalysis?.short_term_report || {};
+  const plan = report.trading_plan || {};
+  const levels = report.support_resistance || {};
+  const latest = state.prices.at(-1);
+  const entry = Number(latest?.close);
+  const stopCandidate = Number(plan.stop ?? levels.support_1);
+  const targetCandidate = Number(plan.planned_target ?? levels.resistance_1);
+  $("#individualPurchaseTitle").textContent = `登記 ${state.stock.symbol} ${state.stock.name} 的實際買進`;
+  $("#individualEntryDate").value = localDate(new Date());
+  $("#individualEntryPrice").value = Number.isFinite(entry) ? entry : "";
+  $("#individualEntryShares").value = "1000";
+  $("#individualStopPrice").value = Number.isFinite(stopCandidate) && (!Number.isFinite(entry) || stopCandidate < entry) ? stopCandidate : "";
+  $("#individualTargetPrice").value = Number.isFinite(targetCandidate) && (!Number.isFinite(entry) || targetCandidate > entry) ? targetCandidate : "";
+  const hasCompleteDefaults = $("#individualStopPrice").value && $("#individualTargetPrice").value;
+  $("#individualPurchaseHint").textContent = hasCompleteDefaults
+    ? "已帶入個股短線分析的停損與目標；請改成符合你實際交易計畫的數字。"
+    : "目前沒有可直接採用的完整價位，請自行填寫低於買進價的停損，以及高於買進價的目標。";
+  $("#individualPurchaseDialog").showModal();
+}
+
+async function saveIndividualShortPosition(event) {
+  event.preventDefault();
+  if (!state.stock) return;
+  const payload = {
+    symbol: state.stock.symbol,
+    entry_date: $("#individualEntryDate").value,
+    entry_price: Number($("#individualEntryPrice").value),
+    shares: Number($("#individualEntryShares").value),
+    stop_price: Number($("#individualStopPrice").value),
+    target_price: Number($("#individualTargetPrice").value),
+  };
+  try {
+    await api("/short-term-positions/manual", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    $("#individualPurchaseDialog").close();
+    toast("持倉已儲存，會和排行榜買進股票使用相同的賣出規則");
+    await loadStock();
+  } catch (error) { toast(error.message, true); }
+}
+
 function renderTable() {
   const rows = state.prices.slice(-10).reverse();
   $("#priceTable").innerHTML = rows.length ? rows.map(row => `
@@ -736,6 +902,10 @@ $("#dividendSyncButton").addEventListener("click", syncDividends);
 $("#ownershipSyncButton").addEventListener("click", syncOwnership);
 $("#institutionSyncButton").addEventListener("click", syncInstitutions);
 $("#watchlistButton").addEventListener("click", toggleWatchlist);
+$("#recordShortPositionButton").addEventListener("click", openIndividualPurchaseDialog);
+$("#individualPurchaseForm").addEventListener("submit", saveIndividualShortPosition);
+$("#closeIndividualPurchaseDialog").addEventListener("click", () => $("#individualPurchaseDialog").close());
+$("#cancelIndividualPurchase").addEventListener("click", () => $("#individualPurchaseDialog").close());
 $("#chartRange").addEventListener("change", scheduleChartDraw);
 $("#chartMode").addEventListener("change", scheduleChartDraw);
 window.addEventListener("resize", () => {

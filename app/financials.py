@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from calendar import monthrange
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 import httpx
@@ -10,6 +12,10 @@ from app.providers import ProviderError
 
 
 REPORT_TYPES = ("ci", "basi", "bd", "fh", "ins", "mim")
+
+# The official latest-quarter OpenAPI statement amounts are in thousands of
+# NTD. Historical rows produced by the research backfill are already NTD.
+OFFICIAL_MONETARY_UNIT_SCALE = Decimal("1000")
 
 
 def _decimal(value: object) -> Decimal | None:
@@ -28,6 +34,22 @@ def _pick(row: dict, *names: str) -> object | None:
 
 def _symbol(row: dict) -> str:
     return str(_pick(row, "公司代號", "SecuritiesCompanyCode") or "").strip()
+
+
+def _published_date(row: dict) -> str | None:
+    raw = "".join(character for character in str(
+        _pick(row, "出表日期", "Date") or ""
+    ) if character.isdigit())
+    if len(raw) == 7:
+        year, month, day = int(raw[:3]) + 1911, int(raw[3:5]), int(raw[5:7])
+    elif len(raw) == 8:
+        year, month, day = int(raw[:4]), int(raw[4:6]), int(raw[6:8])
+    else:
+        return None
+    try:
+        return date(year, month, day).isoformat()
+    except ValueError:
+        return None
 
 
 def _fetch_rows(client: httpx.Client, url: str) -> list[dict]:
@@ -78,12 +100,26 @@ def normalize_financial_rows(
 ) -> dict:
     year = int(_pick(income_row, "年度", "Year") or 0)
     quarter = int(_pick(income_row, "季別", "Season") or 0)
-    return {
+    fiscal_year = year + 1911 if year < 1911 else year
+    fiscal_month = quarter * 3
+    # `Date`/`出表日期` is the API extract date and changes when the same feed is
+    # requested on another day. It is useful for freshness auditing but is not
+    # the company's first disclosure timestamp. Point-in-time consumers must
+    # use the conservative filing lag unless a verified date is supplied.
+    statement_date = None
+    if fiscal_year > 1900 and fiscal_month in {3, 6, 9, 12}:
+        statement_date = f"{fiscal_year:04d}-{fiscal_month:02d}-{monthrange(fiscal_year, fiscal_month)[1]:02d}"
+    row = {
         "symbol": _symbol(income_row),
         "market": market,
-        "fiscal_year": year + 1911 if year < 1911 else year,
+        "fiscal_year": fiscal_year,
         "fiscal_quarter": quarter,
         "report_type": report_type,
+        "statement_date": statement_date,
+        "published_date": None,
+        "source_as_of_date": _published_date(income_row),
+        "source": f"{market} official OpenAPI",
+        "monetary_unit": "TWD",
         "revenue": _decimal(_pick(income_row, "營業收入", "收益")),
         "gross_profit": _decimal(
             _pick(income_row, "營業毛利（毛損）淨額", "營業毛利（毛損）")
@@ -105,6 +141,14 @@ def normalize_financial_rows(
         "equity": _decimal(_pick(balance_row, "權益總額", "權益總計")),
         "book_value_per_share": _decimal(_pick(balance_row, "每股參考淨值")),
     }
+    for field in (
+        "revenue", "gross_profit", "operating_income", "net_income",
+        "current_assets", "total_assets", "current_liabilities",
+        "total_liabilities", "equity",
+    ):
+        if row[field] is not None:
+            row[field] *= OFFICIAL_MONETARY_UNIT_SCALE
+    return row
 
 
 def sync_financials(database: Database, symbol: str) -> dict:

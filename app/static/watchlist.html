@@ -16,6 +16,7 @@
       <span id="apiStatus" class="status-dot"><i></i>服務連線中</span>
       <a href="/recommendations/" class="text-link nav-link">股票推薦</a>
       <a href="/screener/" class="text-link nav-link">所有股票</a>
+      <a href="/performance/" class="text-link nav-link">模型成績／回測</a>
       <a href="/docs" class="text-link utility-link">API 文件</a>
     </div>
   </header>
@@ -28,6 +29,8 @@
       </div>
       <a href="/recommendations/" class="button primary button-link">從推薦中挑選股票</a>
     </section>
+    <section id="portfolioSummary" class="portfolio-summary"></section>
+    <section class="portfolio-detail"><div><p class="eyebrow">INDUSTRY EXPOSURE</p><h2>產業配置</h2><div id="industryExposure" class="industry-exposure"></div></div><div><p class="eyebrow">RISK CHECK</p><h2>部位提醒</h2><ul id="portfolioWarnings" class="portfolio-warnings"></ul></div></section>
     <div id="watchlistSummary" class="watchlist-summary">載入中…</div>
     <section id="watchlistGrid" class="watchlist-grid" aria-live="polite"></section>
     <section id="watchlistEmpty" class="empty-state hidden">
@@ -37,7 +40,25 @@
       <a href="/screener/" class="button primary button-link">前往所有股票</a>
     </section>
   </main>
+  <dialog id="positionDialog" class="position-dialog">
+    <form id="positionForm" method="dialog">
+      <div class="section-heading"><div><p class="eyebrow">POSITION SETTINGS</p><h2 id="positionTitle">編輯持倉</h2></div><button id="closePositionDialog" class="dialog-close" type="button" aria-label="關閉">×</button></div>
+      <input id="positionSymbol" type="hidden">
+      <div class="position-form-grid">
+        <label>平均成本<input id="averageCost" type="number" min="0.01" step="0.01" placeholder="例如 950"></label>
+        <label>持有股數<input id="positionShares" type="number" min="0" step="1" placeholder="例如 1000"></label>
+        <label>買進日期<input id="purchaseDate" type="date"></label>
+        <label>投資期間<select id="investmentHorizon"><option value="">未設定</option><option value="short">短線</option><option value="long">長線</option></select></label>
+        <label>停損價<input id="stopLoss" type="number" min="0.01" step="0.01" placeholder="選填"></label>
+        <label>目標價<input id="targetPrice" type="number" min="0.01" step="0.01" placeholder="選填"></label>
+        <label class="position-notes">備註<textarea id="positionNotes" rows="3" maxlength="500" placeholder="投資理由或觀察重點"></textarea></label>
+      </div>
+      <p class="unit-note">持有股數以「股」為單位；1 張台股通常為 1,000 股。停損價必須低於目標價。</p>
+      <div class="dialog-actions"><button id="clearPositionButton" class="button secondary" type="button">清除持倉資料</button><button class="button primary" type="submit">儲存持倉</button></div>
+    </form>
+  </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="/static/watchlist.js"></script>
+  <script src="/static/global-sync.js?v=20260804-nav"></script>
 </body>
 </html>

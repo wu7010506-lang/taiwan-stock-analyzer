@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>研究實驗室｜台股研究台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/recommendations/"><span class="brand-mark">TW</span><span>台股研究台</span></a>
+    <div class="top-actions">
+      <a href="/performance/" class="text-link nav-link">模型成績</a>
+      <a href="/data-quality/" class="text-link nav-link">資料品質</a>
+      <a href="/research/" class="text-link nav-link active" aria-current="page">研究實驗室</a>
+    </div>
+  </header>
+  <main class="shell">
+    <section class="intro">
+      <div>
+        <p class="eyebrow">ISOLATED RESEARCH / NO LIVE DECISIONS</p>
+        <h1>研究實驗室</h1>
+        <p>預先宣告的參數比較與策略實驗。結果會保存版本、輸入與前視偏誤稽核，但不會改變正式推薦、觀察清單或持倉。</p>
+      </div>
+    </section>
+    <section class="watchlist-summary warning-copy">
+      <strong>研究限制：</strong>AI 決策、參數自動最佳化與自動套用均已停用；樣本外期數或可比基準不足時，實驗會標記為不足或拒絕，不能視為可交易策略。
+    </section>
+    <section class="table-card performance-table-card">
+      <div class="section-heading"><div><p class="eyebrow">POINT-IN-TIME RANKING REPLAY</p><h2>排行榜歷史有效性檢驗</h2><p>固定目前 v2.5 規則，逐期重建當時可知的 Top 10；資料不足的日期不納入結果。</p></div></div>
+      <div class="performance-controls">
+        <label>開始日期<input id="rankingBacktestStart" type="date" value="2023-04-01"></label>
+        <label>結束日期<input id="rankingBacktestEnd" type="date"></label>
+        <label>抽樣頻率<select id="rankingBacktestFrequency"><option value="monthly">每月</option><option value="weekly">每週</option><option value="daily">每日（較慢）</option></select></label>
+        <label>手續費（bps／邊）<input id="rankingBacktestCommission" type="number" value="14.25" min="0" max="100" step="0.01"></label>
+        <label>賣出交易稅（bps）<input id="rankingBacktestSellTax" type="number" value="30" min="0" max="100" step="0.01"></label>
+        <label>滑價（bps／邊）<input id="rankingBacktestSlippage" type="number" value="5" min="0" max="100" step="0.01"></label>
+        <button id="runRankingBacktest" class="button primary" type="button">執行嚴格 PIT 回測</button>
+      </div>
+      <div id="rankingBacktestSummary" class="research-governance">尚未執行。結果會同時顯示排行預測力，以及隔日開盤進場、扣除手續費／交易稅／滑價後的執行代理。</div>
+      <div class="table-scroll"><table><thead><tr><th>持有期</th><th>成熟樣本</th><th>收盤預測報酬</th><th>大盤超額</th><th>同業超額</th><th>正超額率</th><th>Top 1–3 排序優勢</th><th>隔日開盤成本後</th><th>成本後大盤超額</th></tr></thead><tbody id="rankingBacktestRows"><tr><td colspan="9">等待執行</td></tr></tbody></table></div>
+      <h3>依操作狀態拆分｜隔日開盤成本後</h3>
+      <p class="unit-note">用來檢查 ready 是否真的優於 waiting／reject；樣本太少時不可下結論。</p>
+      <div class="table-scroll"><table><thead><tr><th>操作狀態</th><th>3日</th><th>5日</th><th>10日</th></tr></thead><tbody id="rankingOperationRows"><tr><td colspan="4">等待執行</td></tr></tbody></table></div>
+    </section>
+    <section class="table-card performance-table-card">
+      <div class="section-heading"><div><p class="eyebrow">DATA & EXECUTION CONTRACT</p><h2>資料與執行假設</h2><p>所有技術研究共用的成交、成本與資料限制；回測數字必須依此解讀。</p></div></div>
+      <div id="executionAssumptions" class="research-governance">正在載入執行假設⋯</div>
+    </section>
+    <section class="table-card performance-table-card">
+      <div class="section-heading"><div><p class="eyebrow">TECHNICAL RESEARCH GOVERNANCE</p><h2>技術規則與驗證標準</h2><p>技術分析只可在已定義的市場狀態、執行時點與風控下研究；未驗證規則不會影響今日決策。</p></div></div>
+      <div id="technicalGovernance" class="research-governance">正在載入技術研究規格…</div>
+    </section>
+    <section class="performance-controls">
+      <label>最低分數<input id="experimentScore" type="number" value="65" min="0" max="100"></label>
+      <label>持股數<input id="experimentTopN" type="number" value="10" min="1" max="50"></label>
+      <label>樣本外起始日<input id="experimentOos" type="date" value="2026-01-01"></label>
+      <button id="runExperiment" class="button primary" type="button">執行並保存市場策略實驗</button>
+      <button id="runParameterStudy" class="button secondary" type="button">查看預先宣告技術參數研究</button>
+      <button id="runBreakoutWalkForward" class="button secondary" type="button">執行突破 Walk-forward 研究</button>
+      <button id="runBreakoutExperiment" class="button secondary" type="button">保存突破策略樣本外實驗</button>
+      <button id="runEmaAdxStudy" class="button secondary" type="button">查看 EMA／ADX 樣本外研究</button>
+      <button id="runBollingerRsiExperiment" class="button secondary" type="button">保存布林／RSI 均值回歸實驗</button>
+      <button id="runFactorAblation" class="button secondary" type="button">比較預先宣告因子權重</button>
+      <button id="runPaperValuation" class="button secondary" type="button">更新鎖定候選紙上績效</button>
+    </section>
+    <div id="researchStatus" class="watchlist-summary">正在載入實驗歷史…</div>
+    <section class="table-card performance-table-card">
+      <div class="section-heading"><div><p class="eyebrow">AUDITABLE HISTORY</p><h2>已保存實驗</h2></div></div>
+      <div class="table-scroll"><table><thead><tr><th>時間</th><th>策略／版本</th><th>狀態</th><th>樣本外</th><th>前視稽核</th><th>超額報酬</th></tr></thead><tbody id="experimentRows"></tbody></table></div>
+    </section>
+    <section class="table-card performance-table-card">
+      <div class="section-heading"><div><p class="eyebrow">PREDECLARED TREND STUDY</p><h2>EMA／ADX／ATR 樣本外研究</h2></div></div>
+      <div class="table-scroll"><table><thead><tr><th>策略</th><th>全期交易</th><th>全期組合淨報酬</th><th>樣本外起點</th><th>樣本外交易</th><th>樣本外組合淨報酬</th><th>狀態</th></tr></thead><tbody id="emaAdxRows"></tbody></table></div>
+    </section>
+    <section class="table-card performance-table-card">
+      <div class="section-heading"><div><p class="eyebrow">LOCKED FORWARD PAPER TRACKING</p><h2>候選策略紙上績效</h2><p>訊號在收盤後建立，下一個可交易日開盤成交；不會改動正式推薦權重。技術突破的停損／目標由收盤後觀察、隔日才出場，故不得與回測同日成交結果混用。</p></div></div>
+      <div class="table-scroll"><table><thead><tr><th>候選策略</th><th>鎖定狀態</th><th>證據門檻</th><th>前瞻月份</th><th>策略／基準／超額</th><th>最大回撤</th><th>成本</th><th>待成交</th></tr></thead><tbody id="paperStrategyRows"></tbody></table></div>
+    </section>
+    <section class="table-card performance-table-card">
+      <div class="section-heading"><div><p class="eyebrow">FROZEN-RULE WALK-FORWARD</p><h2>突破策略前瞻折</h2><p>固定參數、三個不重疊折；折間保留隔離期。結果只供研究。</p></div></div>
+      <div class="table-scroll"><table><thead><tr><th>起日</th><th>迄日</th><th>交易</th><th>樣本外超額</th><th>隔離</th><th>基準</th></tr></thead><tbody id="walkForwardRows"></tbody></table></div>
+    </section>
+    <section class="table-card performance-table-card">
+      <div class="section-heading"><div><p class="eyebrow">PREDECLARED FACTOR ABLATION</p><h2>因子權重研究</h2></div></div>
+      <div class="table-scroll"><table><thead><tr><th>組態</th><th>全期同曝險超額</th><th>樣本外期數</th><th>樣本外同曝險超額</th><th>最大回撤</th></tr></thead><tbody id="factorAblationRows"></tbody></table></div>
+    </section>
+    <section class="table-card performance-table-card">
+      <div class="section-heading"><div><p class="eyebrow">BOUNDED PARAMETER STUDY</p><h2>技術研究結果</h2><p id="parameterStudyDisclosure">僅顯示預先宣告的鄰近設定；不會按最高報酬自動選參數。</p></div></div>
+      <div class="table-scroll"><table><thead><tr><th>組態</th><th>交易數</th><th>勝率</th><th>平均淨報酬</th><th>限制</th></tr></thead><tbody id="parameterRows"></tbody></table></div>
+    </section>
+  </main>
+  <div id="toast" class="toast"></div>
+  <script src="/static/research.js?v=20260815-execution-3"></script><script src="/static/global-sync.js?v=20260804-nav"></script>
+</body>
+</html>

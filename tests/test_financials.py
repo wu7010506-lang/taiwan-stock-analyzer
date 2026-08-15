@@ -1,4 +1,4 @@
-from app.financials import _decimal, analyze_financials
+from app.financials import _decimal, analyze_financials, normalize_financial_rows
 
 
 def test_financial_decimal_missing_value():
@@ -22,3 +22,25 @@ def test_financial_analysis_for_first_quarter():
     assert result["current_ratio_percent"] == 200
     assert result["annualized_roe_percent"] > 90
     assert result["profitability_status"] == "本期獲利"
+
+
+def test_official_financial_snapshot_has_period_end_date_for_quality_contract():
+    income = {
+        "出表日期": "1150811", "公司代號": "2330", "年度": "115", "季別": "2", "營業收入": "1000",
+        "營業毛利（毛損）淨額": "500", "營業利益（損失）": "300",
+        "本期淨利（淨損）": "200", "基本每股盈餘（元）": "5",
+    }
+    balance = {"公司代號": "2330", "流動資產": "800", "資產總額": "2000",
+               "流動負債": "400", "負債總額": "700", "權益總額": "1300"}
+
+    row = normalize_financial_rows(income, balance, "ci", "TWSE")
+
+    assert row["statement_date"] == "2026-06-30"
+    assert row["published_date"] is None
+    assert row["source_as_of_date"] == "2026-08-11"
+    assert row["source"] == "TWSE official OpenAPI"
+    assert row["monetary_unit"] == "TWD"
+    assert float(row["revenue"]) == 1_000_000
+    assert float(row["total_assets"]) == 2_000_000
+    assert float(row["equity"]) == 1_300_000
+    assert float(row["eps"]) == 5

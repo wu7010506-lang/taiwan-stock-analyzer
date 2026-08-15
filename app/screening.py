@@ -18,10 +18,11 @@ from app.financials import (
     analyze_financials,
     normalize_financial_rows,
 )
-from app.providers import _parse_date
+from app.providers import ProviderError, _parse_date
 from app.revenue import _decimal as revenue_decimal
-from app.valuation import _decimal as valuation_decimal
 from app.themes import THEME_SYMBOLS, stock_themes
+from app.valuation import _decimal as valuation_decimal
+from app.valuation import fetch_valuation_snapshot
 
 
 class ScreenerFilters(BaseModel):
@@ -92,6 +93,7 @@ def _sync_valuations(database: Database, client: httpx.Client) -> int:
     )
     count = 0
     for market, url in sources:
+        bulk_rows = []
         for row in _fetch_rows(client, url):
             if market == "TWSE":
                 symbol = str(row.get("Code", "")).strip()
@@ -112,7 +114,28 @@ def _sync_valuations(database: Database, client: httpx.Client) -> int:
                 }
             if not symbol:
                 continue
-            database.upsert_valuation({"symbol": symbol, "market": market, **normalized})
+            bulk_rows.append({"symbol": symbol, "market": market, **normalized})
+
+        snapshots = {}
+        for valuation_date in {
+            row["valuation_date"] for row in bulk_rows
+        }:
+            try:
+                snapshots[valuation_date] = fetch_valuation_snapshot(
+                    client, market, _parse_date(valuation_date)
+                )
+            except ProviderError:
+                # Keep the lightweight bulk sync available if the detailed
+                # exchange endpoint is temporarily unavailable.
+                snapshots[valuation_date] = {}
+
+        for normalized in bulk_rows:
+            detailed = snapshots[normalized["valuation_date"]].get(
+                normalized["symbol"]
+            )
+            if detailed:
+                normalized.update(detailed)
+            database.upsert_valuation(normalized)
             count += 1
     return count
 

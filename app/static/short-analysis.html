@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>短線分析｜台股研究台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/"><span class="brand-mark">TW</span><span>台股研究台</span></a><div class="top-actions"><a href="/short-analysis/" class="text-link nav-link active" aria-current="page">短線分析</a><a href="/recommendations/" class="text-link nav-link">股票推薦</a><a href="/watchlist/" class="text-link nav-link">我的股票</a><a href="/research/" class="text-link nav-link">研究實驗室</a></div></header>
+  <main class="shell">
+    <section class="intro"><p class="eyebrow">EVIDENCE ONLY · NO TRADE INSTRUCTION</p><h1>短線分析</h1><p>以 2454 聯發科測試：呈現趨勢、相對強弱、價格位置與風險證據，不提供買賣指令。</p></section>
+    <section id="analysisStatus" class="watchlist-summary">正在讀取資料…</section>
+    <section id="analysisGrid" class="dashboard-grid"></section>
+    <p class="unit-note">資料只使用顯示日期以前的日 OHLCV。產業強弱為等權同業代理；ATR 價格是風險參考，不是交易指令。</p>
+  </main>
+  <script src="/static/short-analysis.js"></script><script src="/static/global-sync.js?v=20260804-nav"></script>
+</body>
+</html>

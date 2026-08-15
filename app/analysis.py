@@ -21,31 +21,41 @@ def ema(values: list[float], period: int) -> float | None:
 def rsi(values: list[float], period: int = 14) -> float | None:
     if len(values) <= period:
         return None
-    changes = [new - old for old, new in zip(values, values[1:])][-period:]
-    gains = sum(max(x, 0) for x in changes) / period
-    losses = sum(max(-x, 0) for x in changes) / period
+    changes = [new - old for old, new in zip(values, values[1:])]
+    gains = sum(max(change, 0) for change in changes[:period]) / period
+    losses = sum(max(-change, 0) for change in changes[:period]) / period
+    for change in changes[period:]:
+        gains = (gains * (period - 1) + max(change, 0)) / period
+        losses = (losses * (period - 1) + max(-change, 0)) / period
+    if gains == 0 and losses == 0:
+        return 0.0
     if losses == 0:
         return 100.0
     return 100 - 100 / (1 + gains / losses)
 
 
 def analyze(prices: list[dict]) -> dict:
-    if not prices:
+    # Official feeds occasionally use zero as a missing/suspended quote.  Such a
+    # placeholder must not become a return denominator or a technical signal.
+    valid_prices = [row for row in prices if float(row.get("close") or 0) > 0]
+    if not valid_prices:
         return {}
-    closes = [float(row["close"]) for row in prices]
-    volumes = [float(row["volume"]) for row in prices]
+    closes = [float(row["close"]) for row in valid_prices]
+    volumes = [float(row["volume"]) for row in valid_prices]
     returns = [new / old - 1 for old, new in zip(closes, closes[1:]) if old]
 
     def period_return(days: int) -> float | None:
-        return closes[-1] / closes[-days - 1] - 1 if len(closes) > days else None
+        if len(closes) <= days or closes[-days - 1] <= 0:
+            return None
+        return closes[-1] / closes[-days - 1] - 1
 
     volatility = pstdev(returns[-20:]) * math.sqrt(252) if len(returns) >= 20 else None
     avg_volume = sma(volumes, 20)
     all_time_high_close = max(closes)
     all_time_high_index = max(range(len(closes)), key=closes.__getitem__)
     return {
-        "symbol": prices[-1]["symbol"],
-        "as_of": prices[-1]["trade_date"],
+        "symbol": valid_prices[-1]["symbol"],
+        "as_of": valid_prices[-1]["trade_date"],
         "close": closes[-1],
         "sma_5": sma(closes, 5),
         "sma_20": sma(closes, 20),
@@ -58,6 +68,6 @@ def analyze(prices: list[dict]) -> dict:
         "volatility_20d_annualized": volatility,
         "volume_ratio_20d": volumes[-1] / avg_volume if avg_volume else None,
         "all_time_high_close": all_time_high_close,
-        "all_time_high_date": prices[all_time_high_index]["trade_date"],
+        "all_time_high_date": valid_prices[all_time_high_index]["trade_date"],
         "from_all_time_high": closes[-1] / all_time_high_close - 1,
     }
