@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="監控我的股票的重要技術、基本面、估值與籌碼訊號"><title>提醒中心｜台股研究台</title><link rel="stylesheet" href="/static/styles.css"></head>
 <body>
-<header class="topbar"><a class="brand" href="/recommendations/"><span class="brand-mark">TW</span><span>台股研究台</span></a><div class="top-actions"><a href="/alerts/" class="text-link nav-link active" aria-current="page">提醒中心</a><span id="apiStatus" class="status-dot"><i></i>服務連線中</span><a href="/watchlist/" class="text-link nav-link">我的股票</a><a href="/recommendations/" class="text-link nav-link">股票推薦</a><a href="/screener/" class="text-link nav-link">所有股票</a></div></header>
+<header class="topbar"><a class="brand" href="/recommendations/"><span class="brand-mark">TW</span><span>台股研究台</span></a><div class="top-actions"><a href="/alerts/" class="text-link nav-link active" aria-current="page">提醒中心</a><span id="apiStatus" class="status-dot"><i></i>服務連線中</span><a href="/watchlist/" class="text-link nav-link">我的股票</a><a href="/recommendations/" class="text-link nav-link">股票推薦</a><a href="/screener/" class="text-link nav-link">所有股票</a><a href="/performance/" class="text-link nav-link">模型成績／回測</a></div></header>
 <main class="shell">
   <section class="intro"><div><p class="eyebrow">AUTOMATIC RESEARCH SIGNALS</p><h1>提醒中心</h1><p>自動檢查「我的股票」中的價格、營收、估值、法人與股利事件。</p></div><button id="reloadAlertsButton" class="button primary" type="button">重新檢查</button></section>
   <section class="alert-toolbar" aria-label="投資期間模式">
@@ -20,5 +20,5 @@
   <section id="alertEmpty" class="empty-state hidden"><h2 id="alertEmptyTitle">目前沒有觸發提醒</h2><p>調整篩選條件，或將股票加入「我的股票」並同步足夠的行情與基本面資料。</p><a href="/watchlist/" class="button primary button-link">前往我的股票</a></section>
   <details class="research-notes"><summary>提醒規則與限制</summary><div><p>短線模式從 50 分出發，綜合 RSI、5 日動能、60 日均線、量能、法人、營收、估值及市場狀態。長線模式使用研究型推薦的企業品質、現金流、獲利持續性、估值、產業模型及失效條件，再用價格趨勢檢查進場時機。</p><p>提醒另偵測 RSI 70/30、60 日均線突破、距已同步歷史高點 5%、月營收年增轉正或創高、PE 歷史 20/80 百分位、法人連續三日買賣超，以及未來 30 日除權息。</p><p class="warning-copy">判斷未納入你的持有成本、部位大小、資金需求與風險承受度，不是即時盤中訊號或自動買賣指令。</p></div></details>
 </main>
-<div id="toast" class="toast"></div><script src="/static/alerts.js"></script><script src="/static/global-sync.js"></script>
+<div id="toast" class="toast"></div><script src="/static/alerts.js"></script><script src="/static/global-sync.js?v=20260804-nav"></script>
 </body></html>

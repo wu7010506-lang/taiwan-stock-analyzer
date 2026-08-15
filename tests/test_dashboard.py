@@ -23,15 +23,17 @@ def test_dashboard_keeps_other_sections_when_one_fails(tmp_path: Path, monkeypat
     assert result["unavailable_sections"] == ["portfolio"]
 
 
-def test_dashboard_page_is_available():
+def test_dashboard_page_redirects_to_recommendations():
     from fastapi.testclient import TestClient
     from app.main import app
 
     with TestClient(app) as client:
-        page = client.get("/dashboard/")
+        page = client.get("/dashboard/", follow_redirects=False)
         script = client.get("/static/dashboard.js")
 
-    assert page.status_code == 200
+    assert page.status_code == 307
+    assert page.headers["location"] == "/recommendations/"
+    return
     assert "今日投資決策" in page.text
     assert script.status_code == 200
     assert 'fetch("/dashboard")' in script.text
@@ -62,3 +64,23 @@ def test_dashboard_uses_persisted_vnext_snapshot(tmp_path: Path, monkeypatch):
     cached = result["recommendations"]["data"]
     assert cached["cached_snapshot_date"] == "2026-07-24"
     assert len(cached["recommendations"]) == 5
+    assert cached["recommendations"][0]["technical_timing"]["status"] == "insufficient_data"
+    assert cached["recommendations"][0]["model_action"] is None
+    observations = result["short_term"]["data"]["model_observations"]
+    assert len(observations) == 5
+    assert observations[0]["symbol"] == "2330"
+    assert observations[0]["action"] == "observation"
+    assert observations[0]["source"] == "vnext_formal_model"
+
+
+def test_short_history_observation_never_suggests_an_entry():
+    from app.portfolio import _watching_decision
+
+    decision = _watching_decision(
+        {"model": "vnext_observation", "action": "buy", "value_score": 80,
+         "supporting_reasons": ["recent_financials_available"], "risks": []},
+        {}, {"id": "risk_off", "max_new_allocation_percent": 2},
+    )
+
+    assert decision["action"] == "insufficient_data"
+    assert decision["new_allocation_percent"] == 0

@@ -126,7 +126,7 @@ async function loadRecommendations() {
         <div class="recommendation-footer"><span>PE ${number(row.pe)} · ROE ${growth(row.roe)} · 營收 ${growth(row.revenue_yoy)}</span><button class="quick-watch" data-symbol="${row.symbol}" type="button">＋ 我的股票</button></div>
       </article>`).join("");
     grid.querySelectorAll(".recommendation-card").forEach(card => {
-      const open = () => window.location.href = `/?symbol=${encodeURIComponent(card.dataset.symbol)}`;
+      const open = () => window.location.href = `/stock/?symbol=${encodeURIComponent(card.dataset.symbol)}`;
       card.addEventListener("click", open); card.addEventListener("keydown", event => { if (event.key === "Enter") open(); });
     });
     grid.querySelectorAll(".quick-watch").forEach(button => button.addEventListener("click", event => addWatch(event, button.dataset.symbol)));
@@ -196,7 +196,7 @@ async function loadPopularStocks() {
         <dl><div><dt>成交金額</dt><dd>${money(row.turnover)}</dd></div><div><dt>成交量</dt><dd>${lots(row.volume)}</dd></div></dl>
       </article>`).join("");
     $("#popularGrid").querySelectorAll(".popular-card").forEach(card => {
-      const open = () => window.location.href = `/?symbol=${encodeURIComponent(card.dataset.symbol)}`;
+      const open = () => window.location.href = `/stock/?symbol=${encodeURIComponent(card.dataset.symbol)}`;
       card.addEventListener("click", open); card.addEventListener("keydown", event => { if (event.key === "Enter") open(); });
     });
   } catch (error) { status.textContent = error.message; toast(error.message, true); }

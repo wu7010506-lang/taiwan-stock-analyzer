@@ -7,7 +7,11 @@ from app.database import Database
 from app.evidence_model import build_evidence_from_rows
 from app.industry_model import industry_category, industry_label
 from app.vnext_eligibility import assess_vnext_data_eligibility, normalized_date_sql
-from app.point_in_time import financial_available_sql, revenue_available_sql
+from app.point_in_time import (
+    financial_available_sql,
+    next_session_available_sql,
+    revenue_available_sql,
+)
 
 
 def _bounded(value: float | None, low: float, high: float, inverse: bool = False) -> float:
@@ -69,6 +73,7 @@ def _evaluate_short_history_stock(
     """Conservative observation model for companies without five full years of history."""
     cutoff = as_of_date.isoformat()
     valuation_date = normalized_date_sql("valuation_date")
+    valuation_available_date = next_session_available_sql(valuation_date)
     financial_available_date = financial_available_sql("statement_date")
     revenue_available_date = revenue_available_sql("revenue_month")
     with database.connect() as connection:
@@ -82,7 +87,7 @@ def _evaluate_short_history_stock(
                ORDER BY trade_date DESC LIMIT 120""", (symbol, cutoff)
         )][::-1]
         valuations = [dict(row) for row in connection.execute(
-            f"""SELECT * FROM valuations WHERE symbol=? AND {valuation_date}<=?
+            f"""SELECT * FROM valuations WHERE symbol=? AND {valuation_available_date}<=?
                  ORDER BY {valuation_date} DESC LIMIT 60""", (symbol, cutoff)
         )][::-1]
         revenue = connection.execute(
@@ -143,7 +148,9 @@ def evaluate_vnext_stock(
 
     cutoff = as_of_date.isoformat()
     valuation_date = normalized_date_sql("valuation_date")
+    valuation_available_date = next_session_available_sql(valuation_date)
     financial_available_date = financial_available_sql("statement_date")
+    institution_available_date = next_session_available_sql("trade_date")
     with database.connect() as connection:
         instrument_row = connection.execute(
             "SELECT * FROM instruments WHERE symbol=?", (symbol,)
@@ -157,7 +164,7 @@ def evaluate_vnext_stock(
         )]
         valuation_rows = [dict(row) for row in connection.execute(
             f"""SELECT *, {valuation_date} AS normalized_valuation_date
-               FROM valuations WHERE symbol=? AND {valuation_date}<=?
+               FROM valuations WHERE symbol=? AND {valuation_available_date}<=?
                ORDER BY {valuation_date}""",
             (symbol, cutoff),
         )]
@@ -167,7 +174,7 @@ def evaluate_vnext_stock(
             (symbol, cutoff),
         )][::-1]
         institution_rows = [dict(row) for row in connection.execute(
-            """SELECT * FROM institutional_trades WHERE symbol=? AND trade_date<=?
+            f"""SELECT * FROM institutional_trades WHERE symbol=? AND {institution_available_date}<=?
                ORDER BY trade_date DESC LIMIT 5""",
             (symbol, cutoff),
         )]
@@ -310,8 +317,12 @@ def recommend_vnext_stocks(
         cash_target = 30
 
     with database.connect() as connection:
+        listed_date = normalized_date_sql("listed_date")
         symbols = [row[0] for row in connection.execute(
-            "SELECT symbol FROM instruments ORDER BY symbol"
+            f"""SELECT symbol FROM instruments
+               WHERE listed_date IS NULL OR date({listed_date})<=?
+               ORDER BY symbol""",
+            (as_of_date.isoformat(),)
         )]
     candidates = []
     status_counts = {"eligible": 0, "observation": 0, "insufficient_data": 0}

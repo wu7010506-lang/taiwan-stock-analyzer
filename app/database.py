@@ -10,6 +10,12 @@ from decimal import Decimal
 from app.domain import DailyPrice, Instrument
 
 
+# Direct TWSE/TPEx statements fetched before this rollout were stored in the
+# APIs' native NTD-thousands unit.  From this date onward the ingestion layer
+# writes TWD and tags the source with ``amount-normalized-x1000`` when relevant.
+OFFICIAL_TWD_NORMALIZATION_ROLLOUT_DATE = "2026-08-04"
+
+
 def _coverage_date(value: str | None) -> date | None:
     if not value:
         return None
@@ -125,7 +131,10 @@ CREATE TABLE IF NOT EXISTS financial_snapshots (
     share_capital REAL,
     interest_expense REAL,
     statement_date TEXT,
+    published_date TEXT,
+    source_as_of_date TEXT,
     source TEXT,
+    monetary_unit TEXT,
     fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (symbol, market, fiscal_year, fiscal_quarter)
 );
@@ -145,6 +154,46 @@ CREATE TABLE IF NOT EXISTS watchlist (
     PRIMARY KEY (symbol, market),
     FOREIGN KEY (symbol, market) REFERENCES instruments(symbol, market)
 );
+CREATE TABLE IF NOT EXISTS short_term_positions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    market TEXT NOT NULL,
+    signal_date TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'ranking',
+    entry_date TEXT NOT NULL,
+    entry_price REAL NOT NULL,
+    initial_shares INTEGER NOT NULL,
+    remaining_shares INTEGER NOT NULL,
+    original_stop REAL NOT NULL,
+    active_stop REAL NOT NULL,
+    target_price REAL NOT NULL,
+    target_reduction_executed INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'open',
+    closed_at TEXT,
+    close_reason TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_short_term_positions_one_open
+ON short_term_positions(symbol, market) WHERE status='open';
+CREATE INDEX IF NOT EXISTS idx_short_term_positions_status_date
+ON short_term_positions(status, entry_date DESC);
+CREATE TABLE IF NOT EXISTS short_term_position_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    position_id INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    event_date TEXT NOT NULL,
+    execution_price REAL NOT NULL,
+    shares INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    remaining_shares_after INTEGER NOT NULL,
+    active_stop_after REAL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (position_id) REFERENCES short_term_positions(id)
+);
+CREATE INDEX IF NOT EXISTS idx_short_term_position_events_position_date
+ON short_term_position_events(position_id, event_date DESC, id DESC);
 CREATE TABLE IF NOT EXISTS dividend_events (
     symbol TEXT NOT NULL,
     market TEXT NOT NULL,
@@ -199,9 +248,13 @@ CREATE TABLE IF NOT EXISTS fundamental_sync_queue (
     price_status TEXT NOT NULL DEFAULT 'pending',
     price_rows INTEGER NOT NULL DEFAULT 0,
     price_error TEXT,
+    price_attempts INTEGER NOT NULL DEFAULT 0,
+    price_max_attempts INTEGER NOT NULL DEFAULT 3,
+    price_next_retry_at TEXT,
     error TEXT,
     started_at TEXT,
     finished_at TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (symbol, market)
 );
@@ -221,6 +274,7 @@ CREATE TABLE IF NOT EXISTS data_sync_jobs (
     last_error TEXT,
     last_source TEXT,
     last_success_at TEXT,
+    next_retry_at TEXT,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(dataset, market, symbol, range_start, range_end)
 );
@@ -260,6 +314,7 @@ CREATE TABLE IF NOT EXISTS market_index_snapshots (
     trade_date TEXT PRIMARY KEY,
     close REAL NOT NULL,
     market_score REAL,
+    overheat_score REAL,
     regime TEXT,
     fetched_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -287,6 +342,66 @@ CREATE TABLE IF NOT EXISTS recommendation_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_recommendation_snapshots_profile_date
 ON recommendation_snapshots(profile, snapshot_date DESC, rank);
+CREATE TABLE IF NOT EXISTS short_term_ranking_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_date TEXT NOT NULL,
+    requested_date TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    market TEXT NOT NULL,
+    name TEXT,
+    industry TEXT,
+    rank INTEGER NOT NULL,
+    attention_grade TEXT NOT NULL,
+    attention_score REAL NOT NULL,
+    operation_status TEXT NOT NULL,
+    signal_close REAL NOT NULL,
+    market_close REAL,
+    market_mode TEXT,
+    peer_symbols_json TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(signal_date, strategy_version, symbol, market)
+);
+CREATE INDEX IF NOT EXISTS idx_short_term_ranking_date_rank
+ON short_term_ranking_snapshots(strategy_version, signal_date DESC, rank);
+CREATE TABLE IF NOT EXISTS short_term_ranking_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_date TEXT NOT NULL,
+    requested_date TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    market_date TEXT,
+    coverage_json TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    turnover_percent REAL,
+    changes_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(signal_date, strategy_version)
+);
+CREATE INDEX IF NOT EXISTS idx_short_term_ranking_runs_date
+ON short_term_ranking_runs(strategy_version, signal_date DESC);
+CREATE TABLE IF NOT EXISTS short_term_ranking_run_items (
+    run_id INTEGER NOT NULL,
+    symbol TEXT NOT NULL,
+    market TEXT NOT NULL,
+    name TEXT,
+    industry TEXT,
+    rank INTEGER NOT NULL,
+    attention_grade TEXT NOT NULL,
+    attention_score REAL NOT NULL,
+    operation_status TEXT NOT NULL,
+    signal_close REAL NOT NULL,
+    market_close REAL,
+    market_mode TEXT,
+    peer_symbols_json TEXT NOT NULL,
+    payload_json TEXT NOT NULL,
+    item_json TEXT NOT NULL,
+    PRIMARY KEY (run_id, symbol, market),
+    UNIQUE (run_id, rank),
+    FOREIGN KEY (run_id) REFERENCES short_term_ranking_runs(id)
+);
+CREATE INDEX IF NOT EXISTS idx_short_term_ranking_run_items_run_rank
+ON short_term_ranking_run_items(run_id, rank);
 CREATE TABLE IF NOT EXISTS vnext_recommendation_runs (
     snapshot_date TEXT PRIMARY KEY,
     payload_json TEXT NOT NULL,
@@ -327,6 +442,77 @@ CREATE TABLE IF NOT EXISTS analysis_sync_state (
     error TEXT,
     PRIMARY KEY (symbol, dataset)
 );
+CREATE TABLE IF NOT EXISTS strategy_experiment_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    strategy_key TEXT NOT NULL,
+    strategy_version TEXT NOT NULL,
+    parameters_json TEXT NOT NULL,
+    train_start TEXT,
+    train_end TEXT,
+    out_of_sample_start TEXT,
+    out_of_sample_end TEXT,
+    lookahead_audit_json TEXT NOT NULL,
+    result_json TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_strategy_experiment_runs_key_created
+ON strategy_experiment_runs(strategy_key, created_at DESC);
+CREATE TABLE IF NOT EXISTS paper_strategy_candidates (
+    strategy_key TEXT PRIMARY KEY,
+    strategy_version TEXT NOT NULL,
+    status TEXT NOT NULL,
+    parameters_json TEXT NOT NULL,
+    promotion_policy_json TEXT NOT NULL,
+    locked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS paper_portfolio_orders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    strategy_key TEXT NOT NULL,
+    signal_date TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    market TEXT NOT NULL,
+    side TEXT NOT NULL,
+    target_weight_percent REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    execution_date TEXT,
+    execution_price REAL,
+    shares REAL,
+    costs REAL NOT NULL DEFAULT 0,
+    data_version_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(strategy_key) REFERENCES paper_strategy_candidates(strategy_key)
+);
+CREATE INDEX IF NOT EXISTS idx_paper_orders_strategy_status
+ON paper_portfolio_orders(strategy_key, status, signal_date);
+CREATE TABLE IF NOT EXISTS paper_portfolio_positions (
+    strategy_key TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    market TEXT NOT NULL,
+    shares REAL NOT NULL,
+    average_cost REAL NOT NULL,
+    opened_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(strategy_key, symbol, market),
+    FOREIGN KEY(strategy_key) REFERENCES paper_strategy_candidates(strategy_key)
+);
+CREATE TABLE IF NOT EXISTS paper_portfolio_valuations (
+    strategy_key TEXT NOT NULL,
+    valuation_date TEXT NOT NULL,
+    cash REAL NOT NULL,
+    holdings_value REAL NOT NULL,
+    nav REAL NOT NULL,
+    benchmark_nav REAL,
+    benchmark_close REAL,
+    transaction_costs REAL NOT NULL DEFAULT 0,
+    data_version_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY(strategy_key, valuation_date),
+    FOREIGN KEY(strategy_key) REFERENCES paper_strategy_candidates(strategy_key)
+);
+CREATE INDEX IF NOT EXISTS idx_paper_valuations_strategy_date
+ON paper_portfolio_valuations(strategy_key, valuation_date DESC);
 """
 
 
@@ -360,13 +546,24 @@ class Database:
                 "free_cash_flow": "REAL", "cash_and_equivalents": "REAL",
                 "inventory": "REAL", "property_plant_equipment": "REAL",
                 "share_capital": "REAL", "interest_expense": "REAL",
-                "statement_date": "TEXT", "source": "TEXT",
+                "statement_date": "TEXT", "published_date": "TEXT",
+                "source_as_of_date": "TEXT", "source": "TEXT",
+                "monetary_unit": "TEXT",
             }
             for name, sql_type in additions.items():
                 if name not in financial_columns:
                     connection.execute(
                         f"ALTER TABLE financial_snapshots ADD COLUMN {name} {sql_type}"
                     )
+            connection.execute(
+                """UPDATE financial_snapshots
+                   SET source_as_of_date=COALESCE(source_as_of_date, published_date),
+                       published_date=NULL
+                   WHERE published_date IS NOT NULL
+                     AND (source LIKE 'TWSE official OpenAPI%'
+                          OR source LIKE 'TPEx official OpenAPI%')"""
+            )
+            self._normalize_official_financial_units(connection)
             connection.execute(
                 """UPDATE fundamental_sync_queue
                    SET error='FinMind public API quota is temporarily exhausted; retry later'
@@ -378,11 +575,25 @@ class Database:
             for name, definition in {
                 "price_status": "TEXT NOT NULL DEFAULT 'pending'",
                 "price_rows": "INTEGER NOT NULL DEFAULT 0", "price_error": "TEXT",
+                "price_attempts": "INTEGER NOT NULL DEFAULT 0",
+                "price_max_attempts": "INTEGER NOT NULL DEFAULT 3",
+                "price_next_retry_at": "TEXT",
+                "created_at": "TEXT",
             }.items():
                 if name not in queue_columns:
                     connection.execute(
                         f"ALTER TABLE fundamental_sync_queue ADD COLUMN {name} {definition}"
                     )
+            job_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(data_sync_jobs)")
+            }
+            if "next_retry_at" not in job_columns:
+                connection.execute("ALTER TABLE data_sync_jobs ADD COLUMN next_retry_at TEXT")
+            index_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(market_index_snapshots)")
+            }
+            if "overheat_score" not in index_columns:
+                connection.execute("ALTER TABLE market_index_snapshots ADD COLUMN overheat_score REAL")
             watchlist_columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(watchlist)")
             }
@@ -393,6 +604,94 @@ class Database:
             }.items():
                 if name not in watchlist_columns:
                     connection.execute(f"ALTER TABLE watchlist ADD COLUMN {name} {definition}")
+            paper_valuation_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(paper_portfolio_valuations)")
+            }
+            for name, definition in {"benchmark_nav": "REAL", "benchmark_close": "REAL"}.items():
+                if name not in paper_valuation_columns:
+                    connection.execute(f"ALTER TABLE paper_portfolio_valuations ADD COLUMN {name} {definition}")
+            position_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(short_term_positions)")
+            }
+            if "source" not in position_columns:
+                connection.execute(
+                    "ALTER TABLE short_term_positions ADD COLUMN source TEXT NOT NULL DEFAULT 'ranking'"
+                )
+            connection.execute("PRAGMA optimize")
+
+    @staticmethod
+    def _normalize_official_financial_units(connection: sqlite3.Connection) -> int:
+        """Convert legacy official statements from NTD thousands to NTD.
+
+        Prefer the quarter-revenue ratio where available.  For rows without
+        matching revenue data, use the recorded ingestion rollout boundary and
+        source provenance.  ``monetary_unit IS NULL`` is the idempotency guard.
+        """
+        rows = connection.execute(
+            """SELECT f.rowid, f.revenue, f.source, f.fetched_at,
+                      r.cumulative_revenue
+               FROM financial_snapshots f
+               LEFT JOIN monthly_revenues r
+                 ON r.symbol=f.symbol AND r.market=f.market
+                AND r.revenue_month=printf('%04d-%02d', f.fiscal_year,
+                                           f.fiscal_quarter * 3)
+               WHERE f.monetary_unit IS NULL
+                 AND (f.source LIKE 'TWSE official OpenAPI%'
+                      OR f.source LIKE 'TPEx official OpenAPI%')"""
+        ).fetchall()
+        normalized = 0
+        monetary_fields = (
+            "revenue", "gross_profit", "operating_income", "net_income",
+            "current_assets", "total_assets", "current_liabilities",
+            "total_liabilities", "equity",
+        )
+        assignments = ", ".join(
+            f"{field}=CASE WHEN {field} IS NULL THEN NULL ELSE {field} * 1000 END"
+            for field in monetary_fields
+        )
+        for row in rows:
+            source = str(row["source"] or "")
+            fetched_at = str(row["fetched_at"] or "")
+            explicitly_normalized = "amount-normalized-x1000" in source
+            before_rollout = (
+                bool(fetched_at)
+                and fetched_at[:10] < OFFICIAL_TWD_NORMALIZATION_ROLLOUT_DATE
+            )
+            ratio = None
+            if (
+                row["revenue"] is not None
+                and row["cumulative_revenue"] not in (None, 0)
+            ):
+                ratio = (
+                    abs(float(row["revenue"]))
+                    / abs(float(row["cumulative_revenue"]))
+                )
+
+            should_scale = (
+                not explicitly_normalized
+                and ((ratio is not None and 0.8 <= ratio <= 1.2)
+                     or (ratio is None and before_rollout))
+            )
+            already_twd = (
+                explicitly_normalized
+                or (ratio is not None and 800 <= ratio <= 1200)
+                or (not before_rollout and bool(fetched_at))
+            )
+            if should_scale:
+                connection.execute(
+                    f"""UPDATE financial_snapshots
+                        SET {assignments}, monetary_unit='TWD'
+                        WHERE rowid=?""",
+                    (row["rowid"],),
+                )
+                normalized += 1
+            elif already_twd:
+                connection.execute(
+                    "UPDATE financial_snapshots SET monetary_unit='TWD' WHERE rowid=?",
+                    (row["rowid"],),
+                )
+        return normalized
 
     def upsert_instruments(self, rows: list[Instrument]) -> int:
         with self.connect() as connection:
@@ -472,25 +771,33 @@ class Database:
 
     def list_watchlist(self) -> list[dict]:
         sql = """
+        WITH ranked_prices AS (
+            SELECT p.symbol, p.market, p.trade_date, p.close,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY p.symbol, p.market ORDER BY p.trade_date DESC
+                   ) AS price_rank,
+                   MAX(p.close) OVER (PARTITION BY p.symbol, p.market) AS all_time_high_close
+            FROM daily_prices p
+            JOIN watchlist selected
+              ON selected.symbol=p.symbol AND selected.market=p.market
+        ), market_latest AS (
+            SELECT market, MAX(trade_date) AS trade_date
+            FROM daily_prices WHERE close > 0 GROUP BY market
+        )
         SELECT w.symbol, w.market, w.added_at, w.average_cost, w.shares,
                w.purchase_date, w.stop_loss, w.target_price, w.investment_horizon,
                w.notes, i.name, i.industry,
                latest.trade_date, latest.close,
                previous.close AS previous_close,
-               (SELECT MAX(mp.trade_date) FROM daily_prices mp
-                WHERE mp.close > 0 AND mp.market=w.market)
-                 AS market_latest_date,
-               (SELECT MAX(h.close) FROM daily_prices h
-                WHERE h.symbol=w.symbol AND h.market=w.market) AS all_time_high_close
+               market_latest.trade_date AS market_latest_date,
+               latest.all_time_high_close
         FROM watchlist w
         JOIN instruments i ON i.symbol=w.symbol AND i.market=w.market
-        LEFT JOIN daily_prices latest ON latest.symbol=w.symbol AND latest.market=w.market
-          AND latest.trade_date=(SELECT MAX(p.trade_date) FROM daily_prices p
-                                 WHERE p.symbol=w.symbol AND p.market=w.market)
-        LEFT JOIN daily_prices previous ON previous.symbol=w.symbol AND previous.market=w.market
-          AND previous.trade_date=(SELECT MAX(p2.trade_date) FROM daily_prices p2
-            WHERE p2.symbol=w.symbol AND p2.market=w.market
-              AND p2.trade_date < latest.trade_date)
+        LEFT JOIN ranked_prices latest ON latest.symbol=w.symbol AND latest.market=w.market
+          AND latest.price_rank=1
+        LEFT JOIN ranked_prices previous ON previous.symbol=w.symbol AND previous.market=w.market
+          AND previous.price_rank=2
+        LEFT JOIN market_latest ON market_latest.market=w.market
         ORDER BY w.added_at DESC
         """
         with self.connect() as connection:
@@ -668,6 +975,11 @@ class Database:
                 f"""SELECT COUNT(*) FROM fundamental_sync_queue {failure_where}
                     status='failed' AND attempts >= 3""", params
             ).fetchone()[0]
+            oldest_pending_at = connection.execute(
+                f"""SELECT MIN(created_at) FROM fundamental_sync_queue {condition}
+                    {'AND' if condition else 'WHERE'} status IN ('pending','failed','running')""",
+                params,
+            ).fetchone()[0]
         counts = {row["status"]: row["count"] for row in rows}
         total = sum(counts.values())
         completed = counts.get("completed", 0)
@@ -677,6 +989,7 @@ class Database:
                 "remaining": total - completed,
                 "quota_limited": quota_limited,
                 "terminal_failed": terminal_failed,
+                "oldest_pending_at": oldest_pending_at,
                 "completion_percent": round(completed / total * 100, 1) if total else 0,
                 "failures": failures}
 
@@ -688,17 +1001,22 @@ class Database:
                           price_rows=(SELECT COUNT(*) FROM daily_prices p
                                       WHERE p.symbol=q.symbol AND p.market=q.market),
                           price_error=NULL, updated_at=CURRENT_TIMESTAMP
-                   WHERE price_status NOT IN ('completed', 'short_history')
+                   WHERE price_status NOT IN ('completed', 'short_history', 'terminal_failed')
                      AND (SELECT COUNT(*) FROM daily_prices p
                           WHERE p.symbol=q.symbol AND p.market=q.market) >= 500"""
             )
         return len(rows)
 
-    def reset_failed_price_syncs(self) -> int:
+    def reset_failed_price_syncs(self, quota_cooldown_minutes: int = 60) -> int:
         with self.connect() as connection:
             cursor = connection.execute(
                 """UPDATE fundamental_sync_queue SET price_status='pending', price_error=NULL,
-                          updated_at=CURRENT_TIMESTAMP WHERE price_status='failed'"""
+                          updated_at=CURRENT_TIMESTAMP WHERE price_status='failed'
+                     AND price_attempts < price_max_attempts
+                     AND (price_next_retry_at IS NULL OR price_next_retry_at<=CURRENT_TIMESTAMP)
+                     AND (LOWER(COALESCE(price_error,'')) NOT LIKE '%quota%'
+                          OR datetime(updated_at) <= datetime('now', ?))""",
+                (f"-{max(1, quota_cooldown_minutes)} minutes",),
             )
         return cursor.rowcount
 
@@ -711,10 +1029,11 @@ class Database:
             )
             rows = [dict(row) for row in connection.execute(
                 """SELECT * FROM fundamental_sync_queue WHERE price_status='pending'
+                   AND (price_next_retry_at IS NULL OR price_next_retry_at<=CURRENT_TIMESTAMP)
                    ORDER BY priority LIMIT ?""", (limit,)
             )]
             connection.executemany(
-                """UPDATE fundamental_sync_queue SET price_status='running',
+                """UPDATE fundamental_sync_queue SET price_status='running', price_attempts=price_attempts+1,
                           updated_at=CURRENT_TIMESTAMP WHERE symbol=? AND market=?""",
                 [(row["symbol"], row["market"]) for row in rows],
             )
@@ -724,11 +1043,20 @@ class Database:
                           error: str | None = None,
                           status: str | None = None) -> None:
         with self.connect() as connection:
+            job = connection.execute(
+                """SELECT price_attempts,price_max_attempts FROM fundamental_sync_queue
+                   WHERE symbol=? AND market=?""", (symbol, market)
+            ).fetchone()
+            failed_status = "terminal_failed" if job and job["price_attempts"] >= job["price_max_attempts"] else "failed"
+            next_retry = "datetime('now', '+60 minutes')" if error and "quota" in error.lower() else "datetime('now', '+5 minutes')"
             connection.execute(
                 """UPDATE fundamental_sync_queue SET price_status=?, price_rows=?,
-                          price_error=?, updated_at=CURRENT_TIMESTAMP
+                          price_error=?, price_next_retry_at=CASE WHEN ? IS NULL THEN NULL
+                          WHEN ?='terminal_failed' THEN NULL ELSE """ + next_retry + """ END,
+                          updated_at=CURRENT_TIMESTAMP
                    WHERE symbol=? AND market=?""",
-                (status or ("failed" if error else "completed"), rows, error, symbol, market),
+                (status or (failed_status if error else "completed"), rows, error, error,
+                 status or (failed_status if error else "completed"), symbol, market),
             )
 
     def get_price_sync_progress(self, target_limit: int | None = 100) -> dict:
@@ -755,6 +1083,7 @@ class Database:
                 "running": counts.get("running", 0), "completed": completed,
                 "short_history": short_history,
                 "failed": counts.get("failed", 0),
+                "terminal_failed": counts.get("terminal_failed", 0),
                 "completion_percent": round(resolved / total * 100, 1) if total else 0,
                 "failures": failures}
 
@@ -786,18 +1115,42 @@ class Database:
             status = "completed" if error is None else (
                 "terminal_failed" if job["attempts"] + 1 >= job["max_attempts"] else "failed"
             )
+            retry_at = (
+                None if error is None or status == "terminal_failed"
+                else ("+60 minutes" if "quota" in error.lower() else "+5 minutes")
+            )
             connection.execute(
                 """UPDATE data_sync_jobs SET status=?, attempts=attempts+1,
                    last_error=?, last_source=?, last_success_at=
                    CASE WHEN ? IS NULL THEN CURRENT_TIMESTAMP ELSE last_success_at END,
+                   next_retry_at=CASE WHEN ? IS NULL THEN NULL
+                                      WHEN ?='terminal_failed' THEN NULL
+                                      ELSE datetime('now', ?) END,
                    updated_at=CURRENT_TIMESTAMP WHERE id=?""",
-                (status, error, source, error, job["id"]),
+                (status, error, source, error, error, status, retry_at, job["id"]),
             )
             connection.execute(
                 """INSERT INTO data_sync_attempts(job_id,source,status,rows_written,error)
                    VALUES(?,?,?,?,?)""",
                 (job["id"], source, status, rows_written, error),
             )
+
+    def reset_retryable_data_sync_jobs(self, dataset: str | None = None) -> int:
+        """Release only failed audit jobs whose cooldown has elapsed.
+
+        The queue remains durable across daily runs: terminal failures require a
+        deliberate data/source repair rather than silently restarting forever.
+        """
+        condition = "AND dataset=?" if dataset else ""
+        params = (dataset,) if dataset else ()
+        with self.connect() as connection:
+            cursor = connection.execute(
+                f"""UPDATE data_sync_jobs SET status='pending', updated_at=CURRENT_TIMESTAMP
+                    WHERE status='failed' AND attempts < max_attempts
+                      AND (next_retry_at IS NULL OR next_retry_at<=CURRENT_TIMESTAMP) {condition}""",
+                params,
+            )
+        return cursor.rowcount
 
     def get_data_sync_job_progress(self, dataset: str | None = None) -> dict:
         condition = "WHERE dataset=?" if dataset else ""
@@ -927,15 +1280,64 @@ class Database:
                     cutoff = latest_date - timedelta(days=tolerance_days) if latest_date else None
                     current = sum(item_date is not None and cutoff is not None and item_date >= cutoff
                                   for _, item_date in parsed)
+                    exact = sum(item_date == latest_date for _, item_date in parsed)
                     coverage[name] = {
                         "latest_date": latest_date.isoformat() if latest_date else None,
                         "covered_stocks": current,
                         "total_stocks": total,
                         "coverage_percent": round(current / total * 100, 1) if total else 0,
                         "stale_stocks": max(0, total - current),
+                        "exact_date_stocks": exact,
+                        "exact_date_coverage_percent": (
+                            round(exact / total * 100, 1) if total else 0
+                        ),
+                        "off_latest_date_stocks": max(0, total - exact),
                     }
+                    if name == "institutions":
+                        coverage[name]["exact_date_coverage_of_covered_percent"] = (
+                            round(exact / current * 100, 1) if current else 0
+                        )
                 result[market] = coverage
         return result
+
+    def list_market_dataset_lagging_symbols(
+        self,
+        market: str,
+        dataset: str,
+        *,
+        limit: int = 20,
+    ) -> dict:
+        """List instruments that are not aligned to a dataset's latest market date."""
+        specs = {
+            "prices": ("daily_prices", "trade_date"),
+            "institutions": ("institutional_trades", "trade_date"),
+        }
+        if dataset not in specs:
+            raise ValueError(f"Unsupported exact-date dataset: {dataset}")
+        table, column = specs[dataset]
+        with self.connect() as connection:
+            latest_row = connection.execute(
+                f"SELECT MAX({column}) FROM {table} WHERE market=?", (market,)
+            ).fetchone()
+            latest_date = latest_row[0] if latest_row else None
+            rows = [dict(row) for row in connection.execute(
+                f"""SELECT i.symbol,i.name,MAX(d.{column}) AS latest_date
+                    FROM instruments i
+                    LEFT JOIN {table} d
+                      ON d.symbol=i.symbol AND d.market=i.market
+                    WHERE i.market=?
+                    GROUP BY i.symbol,i.name
+                    HAVING latest_date IS NULL OR latest_date<>?
+                    ORDER BY latest_date IS NOT NULL,latest_date,i.symbol""",
+                (market, latest_date),
+            )]
+        return {
+            "market": market,
+            "dataset": dataset,
+            "target_date": latest_date,
+            "lagging_count": len(rows),
+            "samples": rows[:max(0, limit)],
+        }
 
     def get_market_cached_counts(self, market: str) -> dict[str, int]:
         """Return cache size used when an official market endpoint is unavailable."""
@@ -1020,11 +1422,28 @@ class Database:
             )
         return len(rows)
 
-    def get_institutional_trades(self, symbol: str, limit: int = 120) -> list[dict]:
+    def get_institutional_trades(
+        self,
+        symbol: str,
+        limit: int = 120,
+        *,
+        end_date: str | None = None,
+        market: str | None = None,
+    ) -> list[dict]:
+        conditions = ["symbol=?"]
+        params: list[object] = [symbol]
+        if market:
+            conditions.append("market=?")
+            params.append(market)
+        if end_date:
+            conditions.append("trade_date<=?")
+            params.append(end_date)
+        params.append(limit)
         with self.connect() as connection:
             rows = connection.execute(
-                """SELECT * FROM institutional_trades WHERE symbol=?
-                ORDER BY trade_date DESC LIMIT ?""", (symbol, limit)
+                f"""SELECT * FROM institutional_trades
+                WHERE {' AND '.join(conditions)}
+                ORDER BY trade_date DESC LIMIT ?""", params
             ).fetchall()
         return [dict(row) for row in reversed(rows)]
 
@@ -1077,6 +1496,159 @@ class Database:
                 (started_at, ended_at, parameters_json, result_json),
             )
         return int(cursor.lastrowid)
+
+    def get_recent_vnext_backtest_run(self, parameters_json: str,
+                                      max_age_minutes: int = 15) -> dict | None:
+        """Avoid repeating an expensive read/write backtest for identical inputs."""
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT * FROM vnext_backtest_runs
+                   WHERE parameters_json=?
+                     AND datetime(created_at)>=datetime('now', ?)
+                   ORDER BY id DESC LIMIT 1""",
+                (parameters_json, f"-{max(1, max_age_minutes)} minutes"),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def save_strategy_experiment_run(self, strategy_key: str, strategy_version: str,
+                                     parameters_json: str, lookahead_audit_json: str,
+                                     result_json: str, status: str,
+                                     train_start: str | None = None, train_end: str | None = None,
+                                     out_of_sample_start: str | None = None,
+                                     out_of_sample_end: str | None = None) -> int:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """INSERT INTO strategy_experiment_runs
+                   (strategy_key,strategy_version,parameters_json,train_start,train_end,
+                    out_of_sample_start,out_of_sample_end,lookahead_audit_json,result_json,status)
+                   VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (strategy_key, strategy_version, parameters_json, train_start, train_end,
+                 out_of_sample_start, out_of_sample_end, lookahead_audit_json, result_json, status),
+            )
+        return int(cursor.lastrowid)
+
+    def list_strategy_experiment_runs(self, strategy_key: str | None = None,
+                                      limit: int = 50) -> list[dict]:
+        with self.connect() as connection:
+            if strategy_key:
+                rows = connection.execute(
+                    """SELECT * FROM strategy_experiment_runs WHERE strategy_key=?
+                       ORDER BY id DESC LIMIT ?""", (strategy_key, limit)
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT * FROM strategy_experiment_runs ORDER BY id DESC LIMIT ?", (limit,)
+                ).fetchall()
+        return [dict(row) for row in rows]
+
+    def upsert_paper_strategy_candidate(self, strategy_key: str, strategy_version: str,
+                                        status: str, parameters_json: str,
+                                        promotion_policy_json: str) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO paper_strategy_candidates
+                   (strategy_key,strategy_version,status,parameters_json,promotion_policy_json)
+                   VALUES(?,?,?,?,?) ON CONFLICT(strategy_key) DO UPDATE SET
+                   strategy_version=excluded.strategy_version,status=excluded.status,
+                   parameters_json=excluded.parameters_json,
+                   promotion_policy_json=excluded.promotion_policy_json,
+                   updated_at=CURRENT_TIMESTAMP""",
+                (strategy_key, strategy_version, status, parameters_json, promotion_policy_json),
+            )
+
+    def list_paper_strategy_candidates(self) -> list[dict]:
+        with self.connect() as connection:
+            rows = connection.execute("SELECT * FROM paper_strategy_candidates ORDER BY strategy_key").fetchall()
+        return [dict(row) for row in rows]
+
+    def list_paper_orders(self, strategy_key: str, status: str | None = None) -> list[dict]:
+        with self.connect() as connection:
+            sql = "SELECT * FROM paper_portfolio_orders WHERE strategy_key=?"
+            params: list[object] = [strategy_key]
+            if status:
+                sql += " AND status=?"
+                params.append(status)
+            sql += " ORDER BY id"
+            rows = connection.execute(sql, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_latest_paper_order(self, strategy_key: str, symbol: str, market: str,
+                               side: str, status: str = "executed") -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT * FROM paper_portfolio_orders WHERE strategy_key=? AND symbol=? AND market=?
+                   AND side=? AND status=? ORDER BY id DESC LIMIT 1""",
+                (strategy_key, symbol, market, side, status),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def add_paper_order(self, row: dict) -> int:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """INSERT INTO paper_portfolio_orders
+                   (strategy_key,signal_date,symbol,market,side,target_weight_percent,data_version_json)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (row["strategy_key"], row["signal_date"], row["symbol"], row["market"], row["side"],
+                 row["target_weight_percent"], row["data_version_json"]),
+            )
+        return int(cursor.lastrowid)
+
+    def execute_paper_order(self, order_id: int, execution_date: str, execution_price: float,
+                            shares: float, costs: float, status: str = "executed") -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """UPDATE paper_portfolio_orders SET status=?,execution_date=?,execution_price=?,shares=?,costs=?
+                   WHERE id=?""", (status, execution_date, execution_price, shares, costs, order_id)
+            )
+
+    def upsert_paper_position(self, strategy_key: str, symbol: str, market: str,
+                              shares: float, average_cost: float, opened_at: str) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO paper_portfolio_positions(strategy_key,symbol,market,shares,average_cost,opened_at)
+                   VALUES(?,?,?,?,?,?) ON CONFLICT(strategy_key,symbol,market) DO UPDATE SET
+                   shares=excluded.shares,average_cost=excluded.average_cost,updated_at=CURRENT_TIMESTAMP""",
+                (strategy_key, symbol, market, shares, average_cost, opened_at),
+            )
+
+    def remove_paper_position(self, strategy_key: str, symbol: str, market: str) -> None:
+        with self.connect() as connection:
+            connection.execute("DELETE FROM paper_portfolio_positions WHERE strategy_key=? AND symbol=? AND market=?",
+                               (strategy_key, symbol, market))
+
+    def list_paper_positions(self, strategy_key: str) -> list[dict]:
+        with self.connect() as connection:
+            rows = connection.execute("SELECT * FROM paper_portfolio_positions WHERE strategy_key=?",
+                                      (strategy_key,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_latest_paper_valuation(self, strategy_key: str) -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM paper_portfolio_valuations WHERE strategy_key=? ORDER BY valuation_date DESC LIMIT 1",
+                (strategy_key,)).fetchone()
+        return dict(row) if row else None
+
+    def save_paper_valuation(self, row: dict) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """INSERT INTO paper_portfolio_valuations
+                   (strategy_key,valuation_date,cash,holdings_value,nav,benchmark_nav,benchmark_close,transaction_costs,data_version_json)
+                   VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(strategy_key,valuation_date) DO UPDATE SET
+                   cash=excluded.cash,holdings_value=excluded.holdings_value,nav=excluded.nav,
+                   benchmark_nav=excluded.benchmark_nav,benchmark_close=excluded.benchmark_close,
+                   transaction_costs=excluded.transaction_costs,data_version_json=excluded.data_version_json,
+                   created_at=CURRENT_TIMESTAMP""",
+                (row["strategy_key"], row["valuation_date"], row["cash"], row["holdings_value"], row["nav"],
+                 row.get("benchmark_nav"), row.get("benchmark_close"), row["transaction_costs"], row["data_version_json"]),
+            )
+
+    def list_paper_valuations(self, strategy_key: str, limit: int = 365) -> list[dict]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT * FROM paper_portfolio_valuations WHERE strategy_key=?
+                   ORDER BY valuation_date DESC LIMIT ?""", (strategy_key, limit)).fetchall()
+        return [dict(row) for row in reversed(rows)]
 
     def save_daily_decision_log(self, decision_date: str, market_context_json: str,
                                 payload_json: str, quality_snapshot_id: int | None = None,
@@ -1212,7 +1784,8 @@ class Database:
                 pb_ratio=excluded.pb_ratio, dividend_yield=excluded.dividend_yield,
                 dividend_per_share=excluded.dividend_per_share,
                 dividend_year=excluded.dividend_year,
-                financial_period=excluded.financial_period, fetched_at=CURRENT_TIMESTAMP""",
+                financial_period=COALESCE(excluded.financial_period, valuations.financial_period),
+                fetched_at=CURRENT_TIMESTAMP""",
                 values,
             )
 
@@ -1233,7 +1806,8 @@ class Database:
             "equity", "book_value_per_share",
             "operating_cash_flow", "capital_expenditure", "free_cash_flow",
             "cash_and_equivalents", "inventory", "property_plant_equipment",
-            "share_capital", "interest_expense", "statement_date", "source",
+            "share_capital", "interest_expense", "statement_date", "published_date",
+            "source_as_of_date", "source", "monetary_unit",
         )
         values = []
         for key in columns:
@@ -1248,9 +1822,10 @@ class Database:
                  book_value_per_share, operating_cash_flow, capital_expenditure,
                  free_cash_flow, cash_and_equivalents, inventory,
                  property_plant_equipment, share_capital, interest_expense,
-                 statement_date, source)
+                 statement_date, published_date, source_as_of_date, source,
+                 monetary_unit)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                        ?, ?, ?, ?, ?, ?, ?, ?)
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, market, fiscal_year, fiscal_quarter) DO UPDATE SET
                 report_type=excluded.report_type, revenue=excluded.revenue,
                 gross_profit=excluded.gross_profit, operating_income=excluded.operating_income,
@@ -1268,7 +1843,10 @@ class Database:
                 share_capital=COALESCE(excluded.share_capital, share_capital),
                 interest_expense=COALESCE(excluded.interest_expense, interest_expense),
                 statement_date=COALESCE(excluded.statement_date, statement_date),
+                published_date=COALESCE(excluded.published_date, published_date),
+                source_as_of_date=COALESCE(excluded.source_as_of_date, source_as_of_date),
                 source=COALESCE(excluded.source, source),
+                monetary_unit=COALESCE(excluded.monetary_unit, monetary_unit),
                 fetched_at=CURRENT_TIMESTAMP""",
                 values,
             )

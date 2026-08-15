@@ -59,3 +59,25 @@ def test_accepts_existing_research_recommendation_list(tmp_path: Path):
 
     assert sync["added"] == 1
     assert database.is_watched("2454") is True
+
+
+def test_get_recommendations_does_not_mutate_personal_watchlist(tmp_path: Path, monkeypatch):
+    from app import main
+
+    database = Database(tmp_path / "stocks.db")
+    database.initialize()
+    with database.connect() as connection:
+        connection.execute(
+            "INSERT INTO instruments(symbol, market, name) VALUES (?, ?, ?)",
+            ("2330", "TWSE", "TSMC"),
+        )
+    monkeypatch.setattr(main, "database", database)
+    monkeypatch.setattr(
+        main, "recommend_stocks",
+        lambda *_args, **_kwargs: [{"symbol": "2330", "market": "TWSE"}],
+    )
+
+    result = main.recommendations(20, 70, "evidence_based")
+
+    assert result[0]["symbol"] == "2330"
+    assert database.list_watchlist() == []

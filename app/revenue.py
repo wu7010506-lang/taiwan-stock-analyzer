@@ -86,6 +86,70 @@ def fetch_revenue_month(
     }
 
 
+def _official_month(value: object) -> str:
+    digits = "".join(character for character in str(value or "") if character.isdigit())
+    if len(digits) == 5:
+        return f"{int(digits[:3]) + 1911:04d}-{int(digits[3:]):02d}"
+    if len(digits) == 6:
+        return f"{int(digits[:4]):04d}-{int(digits[4:]):02d}"
+    raise ProviderError(f"Invalid official revenue month: {value!r}")
+
+
+def _value(row: dict, *names: str) -> object:
+    return next((row[name] for name in names if row.get(name) not in {None, ""}), "")
+
+
+def fetch_latest_revenue(
+    client: httpx.Client, symbol: str, market: str,
+) -> dict | None:
+    """Fetch the latest official bulk row as a fallback for MOPS HTML gaps."""
+    url = (
+        "https://openapi.twse.com.tw/v1/opendata/t187ap05_L"
+        if market == "TWSE"
+        else "https://www.tpex.org.tw/openapi/v1/mopsfin_t187ap05_O"
+    )
+    try:
+        response = client.get(url, follow_redirects=True)
+        response.raise_for_status()
+        payload = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise ProviderError(f"Official monthly revenue API failed: {exc}") from exc
+    if not isinstance(payload, list):
+        raise ProviderError("Official monthly revenue API returned an invalid payload")
+    source = next((row for row in payload if str(_value(
+        row, "公司代號", "SecuritiesCompanyCode"
+    )).strip() == symbol), None)
+    if not source:
+        return None
+    return {
+        "symbol": symbol,
+        "market": market,
+        "revenue_month": _official_month(_value(source, "資料年月", "YearMonth")),
+        "revenue": _decimal(str(_value(source, "營業收入-當月營收", "CurrentMonthRevenue"))),
+        "previous_month_revenue": _decimal(str(_value(
+            source, "營業收入-上月營收", "PreviousMonthRevenue"
+        ))),
+        "previous_year_revenue": _decimal(str(_value(
+            source, "營業收入-去年當月營收", "PreviousYearRevenue"
+        ))),
+        "mom_percent": _decimal(str(_value(
+            source, "營業收入-上月比較增減(%)", "MoMPercent"
+        ))),
+        "yoy_percent": _decimal(str(_value(
+            source, "營業收入-去年同月增減(%)", "YoYPercent"
+        ))),
+        "cumulative_revenue": _decimal(str(_value(
+            source, "累計營業收入-當月累計營收", "CumulativeRevenue"
+        ))),
+        "previous_year_cumulative_revenue": _decimal(str(_value(
+            source, "累計營業收入-去年累計營收", "PreviousYearCumulativeRevenue"
+        ))),
+        "cumulative_yoy_percent": _decimal(str(_value(
+            source, "累計營業收入-前期比較增減(%)", "CumulativeYoYPercent"
+        ))),
+    }
+
+
 def _iter_months(start: str, end: str) -> list[tuple[int, int]]:
     try:
         start_year, start_month = map(int, start.split("-"))
@@ -114,6 +178,7 @@ def sync_revenue(database: Database, symbol: str, start: str, end: str) -> dict:
     months = _iter_months(start, end)
     written = 0
     missing = 0
+    written_months: set[str] = set()
     headers = {"User-Agent": settings.user_agent, "Accept": "text/html"}
     with httpx.Client(timeout=settings.http_timeout_seconds, headers=headers, follow_redirects=True) as client:
         for year, month in months:
@@ -121,8 +186,16 @@ def sync_revenue(database: Database, symbol: str, start: str, end: str) -> dict:
             if row:
                 database.upsert_monthly_revenue(row)
                 written += 1
+                written_months.add(row["revenue_month"])
             else:
                 missing += 1
+        latest = fetch_latest_revenue(client, symbol, instrument["market"])
+        if latest and latest["revenue_month"] not in written_months:
+            latest_date = date.fromisoformat(f"{latest['revenue_month']}-01")
+            if date.fromisoformat(f"{start}-01") <= latest_date <= date.fromisoformat(f"{end}-01"):
+                database.upsert_monthly_revenue(latest)
+                written += 1
+                missing = max(0, missing - 1)
     return {
         "symbol": symbol,
         "market": instrument["market"],

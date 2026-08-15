@@ -1,15 +1,46 @@
 from datetime import date, timedelta
 from decimal import Decimal
 
+import httpx
+
 from app.database import Database
 from app.domain import DailyPrice, Instrument
-from app.valuation import _decimal, analyze_valuations, sync_valuations
+from app.valuation import (
+    _decimal,
+    analyze_valuations,
+    fetch_valuation_date,
+    fetch_valuation_snapshot,
+    sync_valuations,
+)
 
 
 def test_valuation_decimal_handles_missing():
     assert _decimal("N/A") is None
     assert _decimal("-") is None
     assert float(_decimal("12.34")) == 12.34
+
+
+def test_twse_valuation_snapshot_includes_official_financial_period():
+    payload = {
+        "stat": "OK",
+        "date": "20260813",
+        "data": [[
+            "2344", "華邦電", "177.00", "0.28", "114", "19.51", "4.83", "115/2"
+        ]],
+    }
+    client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, json=payload)
+        )
+    )
+
+    snapshot = fetch_valuation_snapshot(client, "TWSE", date(2026, 8, 13))
+
+    assert snapshot["2344"]["close_price"] == Decimal("177.00")
+    assert snapshot["2344"]["financial_period"] == "115/2"
+    assert fetch_valuation_date(
+        client, "2344", "TWSE", date(2026, 8, 13)
+    ) == snapshot["2344"]
 
 
 def test_valuation_analysis_percentiles():
@@ -29,6 +60,22 @@ def test_valuation_analysis_percentiles():
     assert result["pe_percentile"] == 100
     assert result["relative_valuation_band"] == "歷史相對高檔"
     assert result["observations"] == 6
+
+
+def test_valuation_upsert_does_not_erase_known_financial_period(tmp_path):
+    database = Database(tmp_path / "stocks.db")
+    database.initialize()
+    database.upsert_valuation({
+        "symbol": "2408", "market": "TWSE", "valuation_date": "20260811",
+        "pe_ratio": 18.98, "financial_period": "115/2",
+    })
+
+    database.upsert_valuation({
+        "symbol": "2408", "market": "TWSE", "valuation_date": "20260811",
+        "pe_ratio": 18.98,
+    })
+
+    assert database.get_valuations("2408", 1)[0]["financial_period"] == "115/2"
 
 
 def test_valuation_sync_uses_known_last_trading_day_once_per_month(tmp_path, monkeypatch):

@@ -19,6 +19,7 @@
       <a href="/watchlist/" class="text-link nav-link">我的股票</a>
       <a href="/recommendations/" class="text-link nav-link">股票推薦</a>
       <a href="/screener/" class="text-link nav-link">所有股票</a>
+      <a href="/performance/" class="text-link nav-link">模型成績／回測</a>
       <a href="/docs" class="text-link utility-link">API 文件</a>
     </div>
   </header>
@@ -176,6 +177,26 @@
           <div id="metricGrid" class="metric-grid"></div>
         </section>
 
+        <section class="table-card short-analysis-placeholder" aria-labelledby="shortAnalysisTitle">
+          <div class="section-heading compact">
+            <div>
+              <p class="eyebrow">SHORT-TERM ANALYSIS · DAILY / WEEKLY</p>
+              <h2 id="shortAnalysisTitle">短線分析</h2>
+            </div>
+            <div class="short-position-tools"><span id="shortPositionStatus" class="muted">3–10 個交易日研究</span><button id="recordShortPositionButton" class="button primary" type="button" hidden>我已買進</button></div>
+          </div>
+          <div id="shortTermAnalysisContent" class="dashboard-actions">
+            <article class="dashboard-action-card wait" aria-label="短線分析尚未設定">
+              <div>
+                <strong>正在載入日 K／週 K 短線研究</strong>
+                <small>將呈現趨勢、支撐壓力、量價、K 線、指標、多週期、條件式交易計畫與限制。</small>
+              </div>
+              <b>研究中</b>
+            </article>
+          </div>
+          <p class="unit-note">交易計畫是條件式研究，不是買賣指令；分 K 資料未提供時會明確標示，且不以日 K 偽造分 K 結論。</p>
+        </section>
+
         <section class="revenue-card">
           <div class="section-heading">
             <div>
@@ -277,8 +298,22 @@
     </div>
   </main>
 
+  <dialog id="individualPurchaseDialog" class="position-dialog">
+    <form id="individualPurchaseForm">
+      <div class="section-heading compact"><div><p class="eyebrow">RECORD ACTUAL PURCHASE</p><h2 id="individualPurchaseTitle">登記實際買進</h2><p>適用任何個股；請確認實際成交資料、停損與第一目標價。</p></div><button id="closeIndividualPurchaseDialog" class="dialog-close" type="button" aria-label="關閉">×</button></div>
+      <div class="position-form-grid">
+        <label>實際買進日<input id="individualEntryDate" type="date" required></label>
+        <label>實際買進價<input id="individualEntryPrice" type="number" min="0.01" step="0.01" required></label>
+        <label>股數<input id="individualEntryShares" type="number" min="1" step="1" required></label>
+        <label>初始停損價<input id="individualStopPrice" type="number" min="0.01" step="0.01" required></label>
+        <label>第一目標價<input id="individualTargetPrice" type="number" min="0.01" step="0.01" required></label>
+      </div>
+      <p id="individualPurchaseHint" class="unit-note">若短線分析有完整交易計畫，系統會自動帶入參考值；仍請依實際成交情況確認。</p>
+      <div class="dialog-actions"><button id="cancelIndividualPurchase" class="button" type="button">取消</button><button class="button primary" type="submit">儲存持倉</button></div>
+    </form>
+  </dialog>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="/static/app.js"></script>
-  <script src="/static/global-sync.js"></script>
+  <script src="/static/app.js?v=20260815-individual-position-1"></script>
+  <script src="/static/global-sync.js?v=20260804-nav"></script>
 </body>
 </html>

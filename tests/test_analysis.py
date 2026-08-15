@@ -14,6 +14,16 @@ def test_rsi_for_only_gains():
     assert rsi(list(range(1, 17)), 14) == 100
 
 
+def test_rsi_uses_wilder_smoothing_like_talib():
+    closes = [
+        44.34, 44.09, 44.15, 43.61, 44.33, 44.83, 45.10,
+        45.42, 45.84, 46.08, 45.89, 46.03, 45.61, 46.28,
+        46.28, 46.00, 46.03, 46.41, 46.22, 45.64, 46.21,
+    ]
+
+    assert rsi(closes, 14) == pytest.approx(62.88071830996241)
+
+
 def test_analysis_returns_latest_metrics():
     rows = [
         {"symbol": "2330", "trade_date": f"2026-01-{index:02d}", "close": index,

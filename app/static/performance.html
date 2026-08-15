@@ -31,11 +31,17 @@
     <section class="performance-controls">
       <label>檢視模式
         <select id="performanceMode">
-          <option value="factors">因子有效性檢查</option>
           <option value="strategy" selected>市場策略 Walk-forward 回測</option>
-          <option value="backtest">歷史選股回測</option>
           <option value="vnext">vNext PIT Walk-forward</option>
-          <option value="live">已儲存推薦快照</option>
+          <option value="technical">Technical breakout / volume / ATR</option>
+          <option value="recommendations">推薦模型追蹤</option>
+        </select>
+      </label>
+      <label id="recommendationReportControl" hidden>推薦研究
+        <select id="recommendationReport">
+          <option value="live" selected>目前推薦成效</option>
+          <option value="backtest">歷史選股回測</option>
+          <option value="factors">因子有效性檢查</option>
         </select>
       </label>
       <label id="profileControl">模型設定
@@ -44,7 +50,7 @@
       <label id="horizonControl">觀察期間
         <select id="performanceHorizon"><option value="5">5 個交易日</option><option value="20" selected>20 個交易日</option><option value="60">60 個交易日</option><option value="120">120 個交易日</option><option value="250">250 個交易日</option></select>
       </label>
-      <label>最低分數<input id="performanceMinScore" type="number" value="65" min="0" max="100" step="1"></label>
+      <label id="minScoreControl">最低分數<input id="performanceMinScore" type="number" value="65" min="0" max="100" step="1"></label>
       <label id="topNControl">每期選股數<input id="performanceTopN" type="number" value="10" min="1" max="50" step="1"></label>
       <label id="outOfSampleControl">樣本外起點<input id="outOfSampleStart" type="date" value="2026-01-01"></label>
       <label id="slippageControl">單邊滑價（bps）<input id="slippageBps" type="number" value="5" min="0" max="100" step="0.5"></label>
@@ -54,10 +60,15 @@
     </section>
     <section id="performanceSummary" class="performance-summary"></section>
     <div id="performanceStatus" class="watchlist-summary">正在載入模型成績⋯</div>
+    <div id="paperGovernanceStatus" class="watchlist-summary warning-copy">正在檢查候選策略治理狀態⋯</div>
     <div id="performanceLimitations" class="watchlist-summary"></div>
     <section class="table-card performance-table-card">
       <div class="section-heading"><div><p class="eyebrow" id="performanceTableEyebrow">HISTORICAL SIGNALS</p><h2 id="performanceTableTitle">歷史選股結果</h2></div></div>
       <div class="table-scroll"><table><thead id="performanceHead"></thead><tbody id="performanceRows"></tbody></table></div>
+    </section>
+    <section id="strategyAttribution" class="table-card performance-table-card" hidden>
+      <div class="section-heading"><div><p class="eyebrow">RESULT ATTRIBUTION</p><h2>市場策略歸因</h2><p>用同曝險基準拆解策略在不同市場狀態、產業與個股的實際貢獻；僅供研究，不能據此自動調整模型。</p></div></div>
+      <div id="strategyAttributionContent"></div>
     </section>
     <details class="research-notes">
       <summary>如何閱讀回測結果與限制</summary>
@@ -69,6 +80,6 @@
     </details>
   </main>
   <div id="toast" class="toast"></div>
-  <script src="/static/performance.js"></script><script src="/static/global-sync.js"></script>
+  <script src="/static/performance.js"></script><script src="/static/global-sync.js?v=20260804-nav"></script>
 </body>
 </html>

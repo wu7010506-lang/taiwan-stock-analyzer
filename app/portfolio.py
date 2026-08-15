@@ -6,6 +6,9 @@ from datetime import date
 from pydantic import BaseModel, Field, model_validator
 
 from app.database import Database
+from app.entry_plan import build_entry_plan, build_investment_checklist
+from app.technical_timing import assess_technical_timing
+from app.short_term_decision import assess_short_term_position
 from app.vnext_model import evaluate_vnext_stock
 
 
@@ -113,17 +116,13 @@ def _watching_decision(model_result: dict, market_context: dict, strategy: dict)
         }
     value_score = model_result.get("value_score") or 0
     if model_result.get("model") == "vnext_observation":
-        action = "short_history_watch"
-        allocation = 0
-        if (strategy["id"] == "risk_off" and value_score >= 65
-                and "market_extreme_overheat" not in model_result.get("risks", [])):
-            action = "short_history_build"
-            allocation = 1
         return {
-            "action": action, "source": "vnext_observation",
+            # Observation-model names have not met the vNext history contract.
+            # They may be tracked, but must never become a live entry suggestion.
+            "action": "insufficient_data", "source": "vnext_observation",
             "reasons": list(model_result.get("supporting_reasons", [])),
             "risks": list(model_result.get("risks", [])),
-            "new_allocation_percent": allocation,
+            "new_allocation_percent": 0,
             "value_score": model_result.get("value_score"),
             "timing_score": model_result.get("timing_score"),
             "confidence": "low", "crowding_risk": "unknown",
@@ -154,15 +153,36 @@ def _watching_decision(model_result: dict, market_context: dict, strategy: dict)
         "confidence": model_result.get("confidence"),
         "crowding_risk": model_result.get("crowding_risk"),
     }
-    return {
-        "action": "hold",
-        "source": "portfolio_default",
-        "reasons": ["no_exit_signal"],
-        "risks": [],
-        "new_allocation_percent": 0,
-    }
 
 
+def _watching_research_decision(database: Database, row: dict, model_result: dict,
+                                market_context: dict, strategy: dict) -> dict:
+    decision = _watching_decision(model_result, market_context, strategy)
+    prices = database.get_prices(row["symbol"], 80)
+    entry_plan = build_entry_plan(prices, model_result, strategy)
+    checklist = build_investment_checklist(model_result, entry_plan)
+    decision["entry_plan"] = entry_plan
+    decision["investment_checklist"] = checklist
+    decision["technical_timing"] = assess_technical_timing(prices, market_context)
+    # A research candidate must pass the price/volume confirmation and risk
+    # budget before the UI can describe it as ready to build.
+    if decision["action"] in {"buy", "build_small"} and not entry_plan.get("actionable"):
+        decision["action"] = "wait"
+        decision["risks"].append("entry_plan_not_confirmed")
+    if entry_plan.get("actionable"):
+        decision["new_allocation_percent"] = min(
+            decision["new_allocation_percent"],
+            entry_plan["suggested_initial_position_percent"],
+        )
+    multiplier = decision["technical_timing"].get("position_multiplier", 1.0)
+    if decision["new_allocation_percent"] > 0 and multiplier < 1:
+        decision["new_allocation_percent"] = round(decision["new_allocation_percent"] * multiplier, 1)
+        decision["technical_position_multiplier"] = multiplier
+    if (decision["action"] in {"buy", "build_small"}
+            and decision["technical_timing"]["signal"] != "favorable"):
+        decision["action"] = "wait"
+        decision["risks"].append("technical_timing_not_favorable")
+    return decision
 def portfolio_summary(
     database: Database,
     market_context: dict | None = None,
@@ -184,13 +204,26 @@ def portfolio_summary(
                        for industry, value in industries.items()),
                       key=lambda item: item["market_value"], reverse=True)
     warnings = []
+    decision_counts: dict[str, int] = defaultdict(int)
     for row in held:
         weight = row["market_value"] / total_value * 100 if total_value else 0
         row["portfolio_weight_percent"] = weight
+        if row.get("investment_horizon") == "short":
+            row["portfolio_decision"] = assess_short_term_position(
+                row, database.get_prices(row["symbol"], 30, end_date=as_of_date.isoformat()), as_of_date
+            )
+            continue
         model_result = evaluate_vnext_stock(
             database, row["symbol"], as_of_date, market_context
         )
         row["portfolio_decision"] = _position_decision(row, model_result, market_context)
+        row["portfolio_decision"]["technical_timing"] = assess_technical_timing(
+            database.get_prices(row["symbol"], 80), market_context
+        )
+        if (row["portfolio_decision"]["action"] == "add"
+                and row["portfolio_decision"]["technical_timing"]["signal"] != "favorable"):
+            row["portfolio_decision"]["action"] = "wait"
+            row["portfolio_decision"]["risks"].append("technical_timing_not_favorable")
         if weight > 10:
             warnings.append(f"{row['symbol']} {row['name']} 占投資組合 {weight:.1f}%，集中度偏高")
         if row["stop_triggered"]:
@@ -200,7 +233,6 @@ def portfolio_summary(
     for item in exposure:
         if item["weight_percent"] > 25:
             warnings.append(f"產業 {item['industry']} 占 {item['weight_percent']:.1f}%，產業集中度偏高")
-    decision_counts: dict[str, int] = defaultdict(int)
     for row in held:
         decision_counts[row["portfolio_decision"]["action"]] += 1
     watching_decisions = []
@@ -210,7 +242,9 @@ def portfolio_summary(
         model_result = evaluate_vnext_stock(
             database, row["symbol"], as_of_date, market_context
         )
-        decision = _watching_decision(model_result, market_context, strategy)
+        decision = _watching_research_decision(
+            database, row, model_result, market_context, strategy
+        )
         watching_decisions.append({
             "symbol": row["symbol"], "name": row["name"], "decision": decision,
         })

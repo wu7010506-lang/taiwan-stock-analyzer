@@ -123,6 +123,21 @@ def test_dataset_job_audit_keeps_attempt_history_and_terminal_failure(tmp_path: 
     assert attempts == 3
 
 
+def test_dataset_jobs_respect_retry_cooldown_before_becoming_pending(tmp_path: Path):
+    database = Database(tmp_path / "stocks.db")
+    database.initialize()
+    database.enqueue_data_sync_jobs("price_history", [{"symbol": "1000", "market": "TWSE"}])
+    database.record_data_sync_attempt("price_history", "1000", "TWSE", error="source down")
+
+    assert database.reset_retryable_data_sync_jobs("price_history") == 0
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE data_sync_jobs SET next_retry_at='2000-01-01' WHERE dataset='price_history'"
+        )
+    assert database.reset_retryable_data_sync_jobs("price_history") == 1
+    assert database.get_data_sync_job_progress("price_history")["pending"] == 1
+
+
 def test_source_health_resets_after_a_successful_attempt(tmp_path: Path):
     database = Database(tmp_path / "stocks.db")
     database.initialize()
@@ -184,3 +199,23 @@ def test_short_listing_history_is_not_reported_as_a_source_failure(tmp_path: Pat
     assert result["processed"][0]["status"] == "insufficient_history"
     assert result["progress"]["failed"] == 0
     assert result["progress"]["short_history"] == 1
+
+
+def test_price_queue_marks_repeated_provider_failure_as_terminal(tmp_path: Path):
+    database = Database(tmp_path / "stocks.db")
+    database.initialize()
+    database.prepare_price_sync_queue([{"symbol": "1000", "market": "TWSE"}])
+
+    claimed = database.claim_price_sync_batch(1)
+    assert claimed[0]["symbol"] == "1000"
+    # Simulate two earlier dispatches; the third error must no longer cycle
+    # back into the pending queue indefinitely.
+    with database.connect() as connection:
+        connection.execute(
+            "UPDATE fundamental_sync_queue SET price_attempts=3 WHERE symbol='1000' AND market='TWSE'"
+        )
+    database.finish_price_sync("1000", "TWSE", error="provider unavailable")
+
+    progress = database.get_price_sync_progress(None)
+    assert progress["terminal_failed"] == 1
+    assert database.reset_failed_price_syncs() == 0

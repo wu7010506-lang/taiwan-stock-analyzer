@@ -39,6 +39,7 @@ const decisionReason = {
   cashflow_supports_earnings: "\u73fe\u91d1\u6d41\u652f\u6490\u7372\u5229", valuation_has_margin_of_safety: "\u4f30\u503c\u5177\u5b89\u5168\u908a\u969b",
   market_risk_off: "\u5e02\u5834\u8655\u65bc\u98a8\u96aa\u8da8\u907f\u72c0\u614b", institution_driven_surge: "\u6cd5\u4eba\u8ffd\u50f9\u98a8\u96aa\u504f\u9ad8",
   risk_off_quality_candidate: "\u504f\u7a7a\u5e02\u5834\u4e2d\u7684\u9ad8\u54c1\u8cea\u5206\u6279\u5019\u9078",
+  entry_plan_not_confirmed: "\u9032\u5834\u5340\u3001\u91cf\u80fd\u6216\u98a8\u96aa\u9810\u7b97\u5c1a\u672a\u78ba\u8a8d\uff0c\u5148\u89c0\u671b",
   short_history_model: "\u4ee5\u8fd1\u671f\u8ca1\u5831\u8207\u884c\u60c5\u9032\u884c\u8f03\u77ed\u8cc7\u6599\u8a55\u4f30", recent_financials_available: "\u8fd1\u671f\u8ca1\u5831\u53ef\u4f9b\u5206\u6790",
   limited_operating_history: "\u71df\u904b\u6b77\u53f2\u5c1a\u77ed\uff0c\u4e0d\u53ef\u8996\u70ba\u9577\u671f\u54c1\u8cea\u8b49\u660e",
 };
@@ -47,11 +48,16 @@ function renderDecision(decision) {
   if (!decision) return "";
   const reasons = [...(decision.reasons || []), ...(decision.risks || [])]
     .map(item => decisionReason[item] || item).slice(0, 3);
+  const plan = decision.entry_plan;
+  const checklist = decision.investment_checklist;
+  const planHtml = plan?.entry_zone ? `<div class="entry-plan"><small>\u9032\u5834\u8a08\u756b\uff08\u7814\u7a76\u7528\u9014\uff09</small><span>\u5340\u9593 ${number(plan.entry_zone.low)}–${number(plan.entry_zone.high)}\uff5c\u5931\u6548 ${number(plan.invalidation_price)}</span><span>\u98a8\u96aa ${number(plan.risk_percent)}%\uff5c\u521d\u59cb\u90e8\u4f4d\u4e0a\u9650 ${number(plan.suggested_initial_position_percent)}%</span></div>` : `<small>\u9032\u5834\u8a08\u756b\u8cc7\u6599\u4e0d\u8db3\uff0c\u8acb\u5148\u540c\u6b65\u8fd1\u671f\u50f9\u91cf\u8cc7\u6599\u3002</small>`;
+  const checklistHtml = checklist ? `<small>\u81ea\u52d5\u6aa2\u6838\u901a\u904e ${checklist.passed}/${checklist.total}\uff1b\u5546\u696d\u6a21\u5f0f\u3001\u6cbb\u7406\u8207\u8ad6\u9ede\u5931\u6548\u689d\u4ef6\u4ecd\u9808\u4eba\u5de5\u7814\u7a76\u3002</small>` : "";
   return `<section class="position-decision ${decision.action}">
     <div><span>\u76e4\u52e2\u7d9c\u5408\u5efa\u8b70</span><strong>${decisionLabel[decision.action] || decision.action}</strong></div>
     ${decision.value_score != null ? `<small>\u4f01\u696d\u50f9\u503c ${number(decision.value_score)} \uff5c\u9032\u5834\u6642\u6a5f ${number(decision.timing_score)}</small>` : ""}
     ${decision.new_allocation_percent > 0 ? `<small>\u5efa\u8b70\u6700\u591a\u52a0\u78bc ${number(decision.new_allocation_percent)}% \u7e3d\u8cc7\u91d1</small>` : ""}
     ${reasons.length ? `<ul>${reasons.map(item => `<li>${item}</li>`).join("")}</ul>` : ""}
+    ${planHtml}${checklistHtml}
   </section>`;
 }
 
@@ -105,7 +111,7 @@ async function load() {
       </article>`;
     }).join("");
     grid.querySelectorAll(".watch-card").forEach(card => {
-      const open = () => window.location.href = `/?symbol=${encodeURIComponent(card.dataset.symbol)}`;
+      const open = () => window.location.href = `/stock/?symbol=${encodeURIComponent(card.dataset.symbol)}`;
       card.addEventListener("click", open);
       card.addEventListener("keydown", event => { if (event.key === "Enter") open(); });
     });

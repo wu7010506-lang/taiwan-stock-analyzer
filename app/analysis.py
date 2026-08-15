@@ -21,9 +21,14 @@ def ema(values: list[float], period: int) -> float | None:
 def rsi(values: list[float], period: int = 14) -> float | None:
     if len(values) <= period:
         return None
-    changes = [new - old for old, new in zip(values, values[1:])][-period:]
-    gains = sum(max(x, 0) for x in changes) / period
-    losses = sum(max(-x, 0) for x in changes) / period
+    changes = [new - old for old, new in zip(values, values[1:])]
+    gains = sum(max(change, 0) for change in changes[:period]) / period
+    losses = sum(max(-change, 0) for change in changes[:period]) / period
+    for change in changes[period:]:
+        gains = (gains * (period - 1) + max(change, 0)) / period
+        losses = (losses * (period - 1) + max(-change, 0)) / period
+    if gains == 0 and losses == 0:
+        return 0.0
     if losses == 0:
         return 100.0
     return 100 - 100 / (1 + gains / losses)

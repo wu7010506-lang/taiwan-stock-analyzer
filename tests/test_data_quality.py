@@ -3,10 +3,11 @@ from decimal import Decimal
 from pathlib import Path
 
 from app.data_quality import (_friendly_sync_error, build_data_quality_report,
-                              capture_data_quality_snapshot)
+                              vnext_history_coverage,
+                              capture_data_quality_snapshot, evaluate_data_contracts)
 from app.database import Database
 from app.domain import DailyPrice, Instrument
-from app.service import sync_market_data
+from app.service import sync_market_data, sync_twse_candidate_price_fallback
 
 
 def test_data_quality_report_flags_low_market_coverage(tmp_path: Path):
@@ -27,8 +28,26 @@ def test_data_quality_report_flags_low_market_coverage(tmp_path: Path):
     assert report["markets"]["TWSE"]["prices"]["coverage_percent"] == 50.0
     assert report["queues"]["fundamentals"]["universe_total"] == 2
     assert report["queues"]["fundamentals"]["full_market_initialized"] is False
-    assert any(issue["code"] == "low_coverage" for issue in report["issues"])
+    price_issue = next(
+        issue for issue in report["issues"]
+        if issue["code"] == "low_coverage" and issue.get("dataset") == "prices"
+    )
+    assert "1/2" in price_issue["detail"]
+    assert report["quarantine"]["total_symbols"] == 1
+    assert report["quarantine"]["groups"][0]["samples"][0]["symbol"] == "2454"
     assert report["contracts"]["status"] == "failed"
+
+
+def test_vnext_history_coverage_explains_missing_research_prerequisites(tmp_path: Path):
+    database = Database(tmp_path / "stocks.db")
+    database.initialize()
+    database.upsert_instruments([Instrument("1000", "Test", "TWSE", None)])
+
+    coverage = vnext_history_coverage(database, target_limit=10, as_of_date=date(2026, 7, 29))
+
+    assert coverage["status"] == "backfill_required"
+    assert coverage["missing_counts"]["financial_history"] == 1
+    assert coverage["missing_counts"]["price_history"] == 1
 
 
 def test_data_quality_snapshot_persists_contract_results(tmp_path: Path):
@@ -79,6 +98,7 @@ def test_data_quality_page_and_api_are_available():
     assert page.status_code == 200
     assert "資料品質中心" in page.text
     assert 'id="snapshotQualityButton"' in page.text
+    assert 'id="quarantineRows"' in page.text
     assert report.status_code == 200
     assert "markets" in report.json()
     assert client.post("/data-quality/snapshot").status_code == 200
@@ -101,6 +121,60 @@ def test_market_sync_uses_explicit_cache_fallback(tmp_path: Path, monkeypatch):
     assert result["TWSE"]["status"] == "cached"
     assert result["TWSE"]["instruments"] == 1
     assert result["status"] == "partial"
+
+
+def test_market_sync_reports_successful_but_misaligned_market_dates_as_partial(
+    tmp_path: Path, monkeypatch,
+):
+    database = Database(tmp_path / "stocks.db")
+    database.initialize()
+    monkeypatch.setattr("app.service.TwseProvider.fetch_instruments", lambda _: [])
+    monkeypatch.setattr("app.service.TpexProvider.fetch_instruments", lambda _: [])
+    monkeypatch.setattr(
+        "app.service.TwseProvider.fetch_latest_prices",
+        lambda _: [DailyPrice("2330", "TWSE", date(2026, 8, 10), Decimal("100"),
+                              Decimal("101"), Decimal("99"), Decimal("100"), 1000)],
+    )
+    monkeypatch.setattr(
+        "app.service.TpexProvider.fetch_latest_prices",
+        lambda _: [DailyPrice("3105", "TPEx", date(2026, 8, 11), Decimal("50"),
+                              Decimal("51"), Decimal("49"), Decimal("50"), 1000)],
+    )
+
+    result = sync_market_data(database)
+
+    assert result["TWSE"]["data_date"] == "2026-08-10"
+    assert result["TPEx"]["data_date"] == "2026-08-11"
+    assert result["status"] == "partial"
+    assert result["incomplete_markets"] == ["TWSE"]
+
+
+def test_twse_candidate_fallback_uses_official_month_history_for_target_date(
+    tmp_path: Path, monkeypatch,
+):
+    database = Database(tmp_path / "stocks.db")
+    database.initialize()
+
+    def history(_provider, symbol, _month):
+        close = Decimal("100") if symbol == "2330" else Decimal("200")
+        return [DailyPrice(symbol, "TWSE", date(2026, 8, 11), close, close,
+                           close, close, 1000)]
+
+    monkeypatch.setattr("app.service.TwseProvider.fetch_history_month", history)
+
+    result = sync_twse_candidate_price_fallback(
+        database, date(2026, 8, 11), symbols=["2330", "2454"], pause_seconds=0
+    )
+
+    assert result["status"] == "completed"
+    assert result["source"] == "TWSE official per-symbol STOCK_DAY"
+    assert result["requested_symbols"] == 2
+    assert result["target_date_symbols"] == 2
+    assert result["coverage_percent"] == 100.0
+    with database.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM daily_prices WHERE market='TWSE' AND trade_date='2026-08-11'"
+        ).fetchone()[0] == 2
 
 
 def test_data_quality_report_exposes_source_policy_and_cached_fallback(tmp_path: Path):
@@ -165,3 +239,40 @@ def test_data_quality_reports_repeated_provider_failure(tmp_path: Path):
 
     assert report["source_health"][0]["consecutive_failures"] == 3
     assert any(issue["code"] == "unhealthy_data_sources" for issue in report["issues"])
+
+
+def test_contract_rejects_stale_dataset_even_when_coverage_is_complete():
+    contracts = evaluate_data_contracts({"TWSE": {"prices": {
+        "coverage_percent": 100, "latest_date": "2026-07-01",
+    }}}, as_of_date=date(2026, 7, 29))
+
+    check = contracts["checks"][0]
+    assert check["status"] == "failed"
+    assert check["actual_age_days"] == 28
+
+
+def test_contract_rejects_price_coverage_that_is_not_on_the_latest_market_date():
+    contracts = evaluate_data_contracts({"TWSE": {"prices": {
+        "coverage_percent": 100,
+        "exact_date_coverage_percent": 17.5,
+        "latest_date": "2026-08-13",
+    }}}, as_of_date=date(2026, 8, 14))
+
+    check = contracts["checks"][0]
+    assert check["status"] == "failed"
+    assert check["coverage_basis"] == "exact_latest_date"
+    assert check["actual_coverage_percent"] == 17.5
+
+
+def test_institution_contract_uses_recent_feed_cohort_not_all_listed_companies():
+    contracts = evaluate_data_contracts({"TPEx": {"institutions": {
+        "coverage_percent": 96.0,
+        "exact_date_coverage_percent": 88.9,
+        "exact_date_coverage_of_covered_percent": 92.6,
+        "latest_date": "2026-08-13",
+    }}}, as_of_date=date(2026, 8, 14))
+
+    check = contracts["checks"][0]
+    assert check["status"] == "passed"
+    assert check["coverage_basis"] == "exact_latest_date_recent_cohort"
+    assert check["actual_coverage_percent"] == 92.6

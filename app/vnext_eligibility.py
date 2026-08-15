@@ -3,7 +3,8 @@ from __future__ import annotations
 from datetime import date
 
 from app.database import Database
-from app.point_in_time import financial_available_sql, revenue_available_sql
+from app.financial_integrity import assess_financial_integrity
+from app.point_in_time import financial_available_sql, next_session_available_sql, revenue_available_sql
 
 
 def normalized_date_sql(column: str) -> str:
@@ -21,6 +22,22 @@ def _days_old(as_of_date: date, value: str | None) -> int | None:
     return (as_of_date - date.fromisoformat(value)).days
 
 
+def _latest_revenue_month_due(as_of_date: date) -> str:
+    """Return the newest monthly-revenue period required on this date.
+
+    Listed companies report the preceding month's revenue by the 10th.  Before
+    that deadline, requiring the immediately preceding month would mark every
+    otherwise-current stock stale for several calendar days.
+    """
+    months_back = 2 if as_of_date.day <= 10 else 1
+    year = as_of_date.year
+    month = as_of_date.month - months_back
+    while month <= 0:
+        year -= 1
+        month += 12
+    return f"{year:04d}-{month:02d}"
+
+
 def assess_vnext_data_eligibility(
     database: Database,
     symbol: str,
@@ -29,8 +46,10 @@ def assess_vnext_data_eligibility(
     """Decide whether point-in-time data can support a formal vNext recommendation."""
     cutoff = as_of_date.isoformat()
     valuation_date = normalized_date_sql("valuation_date")
+    valuation_available_date = next_session_available_sql(valuation_date)
     financial_available_date = financial_available_sql("statement_date")
     revenue_available_date = revenue_available_sql("revenue_month")
+    institution_available_date = next_session_available_sql("trade_date")
     with database.connect() as connection:
         financial = dict(connection.execute(
             f"""SELECT COUNT(*) AS periods,
@@ -46,6 +65,14 @@ def assess_vnext_data_eligibility(
                  AND {financial_available_date}<=?""",
             (symbol, cutoff),
         ).fetchone())
+        financial_rows = [dict(row) for row in connection.execute(
+            f"""SELECT fiscal_year, fiscal_quarter, total_assets, total_liabilities, equity
+                FROM financial_snapshots
+                WHERE symbol=? AND statement_date IS NOT NULL
+                  AND {financial_available_date}<=?
+                ORDER BY fiscal_year, fiscal_quarter""",
+            (symbol, cutoff),
+        )]
         complete_years = connection.execute(
             f"""SELECT COUNT(*) FROM (
                    SELECT fiscal_year
@@ -70,12 +97,12 @@ def assess_vnext_data_eligibility(
         ).fetchone()[0]
         latest_valuation = connection.execute(
             f"""SELECT MAX({valuation_date}) FROM valuations
-               WHERE symbol=? AND {valuation_date}<=?""",
+               WHERE symbol=? AND {valuation_available_date}<=?""",
             (symbol, cutoff),
         ).fetchone()[0]
         latest_institution = connection.execute(
-            """SELECT MAX(trade_date) FROM institutional_trades
-               WHERE symbol=? AND trade_date<=?""",
+            f"""SELECT MAX(trade_date) FROM institutional_trades
+               WHERE symbol=? AND {institution_available_date}<=?""",
             (symbol, cutoff),
         ).fetchone()[0]
         ignored_future_rows = connection.execute(
@@ -88,9 +115,9 @@ def assess_vnext_data_eligibility(
                + (SELECT COUNT(*) FROM monthly_revenues
                  WHERE symbol=? AND {revenue_available_date}>?)
                + (SELECT COUNT(*) FROM valuations
-                  WHERE symbol=? AND {valuation_date}>?)
+                  WHERE symbol=? AND {valuation_available_date}>?)
                + (SELECT COUNT(*) FROM institutional_trades
-                  WHERE symbol=? AND trade_date>?)""",
+                  WHERE symbol=? AND {institution_available_date}>?)""",
             (symbol, cutoff, symbol, cutoff, symbol, cutoff,
              symbol, cutoff, symbol, cutoff),
         ).fetchone()[0]
@@ -115,14 +142,17 @@ def assess_vnext_data_eligibility(
         "valuation_days": _days_old(as_of_date, latest_valuation),
         "institution_days": _days_old(as_of_date, latest_institution),
     }
+    revenue_due_month = _latest_revenue_month_due(as_of_date)
+    revenue_timely = bool(latest_revenue and latest_revenue >= revenue_due_month)
     freshness_passed = bool(
         ages["price_days"] is not None and ages["price_days"] <= 7
         and ages["financial_days"] is not None and ages["financial_days"] <= 190
-        and ages["revenue_days"] is not None and ages["revenue_days"] <= 62
+        and revenue_timely
         and ages["valuation_days"] is not None and ages["valuation_days"] <= 14
         and ages["institution_days"] is not None and ages["institution_days"] <= 7
     )
 
+    integrity_issues = assess_financial_integrity(financial_rows)
     checks = {
         "financial_history": {
             "passed": financial_passed,
@@ -134,10 +164,18 @@ def assess_vnext_data_eligibility(
             "periods": price["periods"] or 0,
             "span_days": price_span_days,
         },
-        "freshness": {"passed": freshness_passed, **ages},
+        "freshness": {
+            "passed": freshness_passed, **ages,
+            "revenue_due_month": revenue_due_month,
+            "latest_revenue_month": latest_revenue,
+        },
         "point_in_time": {
             "passed": True,
             "ignored_future_rows": ignored_future_rows,
+        },
+        "financial_integrity": {
+            "passed": not integrity_issues,
+            "issues": integrity_issues,
         },
     }
     missing = [name for name, check in checks.items() if not check["passed"]]

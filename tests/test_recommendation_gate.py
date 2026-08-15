@@ -1,4 +1,4 @@
-from app.recommendation_gate import apply_formal_recommendation_gate
+from app.recommendation_gate import apply_formal_recommendation_gate, formal_recommendation_gate
 
 
 def test_failed_contract_keeps_research_rows_but_blocks_formal_recommendation():
@@ -21,3 +21,9 @@ def test_complete_contract_allows_formal_recommendation():
     apply_formal_recommendation_gate(result, report)
 
     assert result["formal_recommendation_gate"]["allowed"] is True
+
+
+def test_gate_uses_contract_not_nonblocking_warning_status():
+    gate = formal_recommendation_gate({"status": "warning", "contracts": {"status": "passed", "failed": 0},
+                                       "queues": {"sync_jobs": {"terminal_failed": 0}}})
+    assert gate["allowed"] is True

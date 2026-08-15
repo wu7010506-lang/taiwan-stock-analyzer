@@ -20,6 +20,7 @@ from app.data_quality import capture_data_quality_snapshot
 from app.data_quality import build_data_quality_report
 from app.recommendation_gate import apply_formal_recommendation_gate
 from app.decision_history import capture_daily_decision_history
+from app.short_term_tracking import capture_short_term_ranking_snapshot
 
 
 def _sync_watchlist_with_retry(database: Database) -> dict:
@@ -94,6 +95,9 @@ def run_daily_close_sync(database: Database) -> dict:
         ("recommendation_snapshots", lambda: capture_recommendation_snapshots(
             database, get_market_context()
         )),
+        ("short_term_ranking_snapshot", lambda: capture_short_term_ranking_snapshot(
+            database, get_market_context()
+        )),
         ("vnext_recommendations", lambda: _capture_vnext_recommendations(database)),
         ("data_freshness", lambda: {
             "status": "completed", "markets": database.get_market_data_freshness(),
@@ -126,14 +130,9 @@ def run_daily_close_sync(database: Database) -> dict:
 
 
 def _capture_vnext_recommendations(database: Database) -> dict:
-    from app.recommendation_watchlist import add_top_recommendations_to_watchlist
-
     result = recommend_vnext_stocks(database, datetime.now().date(), get_market_context(), 100)
     apply_formal_recommendation_gate(result, build_data_quality_report(database))
-    watchlist_sync = (
-        add_top_recommendations_to_watchlist(database, result, 20)
-        if result["formal_recommendation_gate"]["allowed"] else {"added": 0, "skipped": "data_quality_gate"}
-    )
+    watchlist_sync = {"added": 0, "skipped": "manual_watchlist_only"}
     database.save_vnext_recommendation_run(
         result["as_of_date"], json.dumps(result, ensure_ascii=False, default=str)
     )

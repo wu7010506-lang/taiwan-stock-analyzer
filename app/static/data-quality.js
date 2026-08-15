@@ -16,12 +16,32 @@ async function loadQuality() {
 
   const labels = {prices:"日價量",revenues:"月營收",valuations:"估值",financials:"財報",institutions:"法人買賣"};
   $("#coverageRows").innerHTML = Object.entries(data.markets || {}).flatMap(([market,datasets]) =>
-    Object.entries(datasets).map(([name,row]) => `<tr><td>${market}</td><td>${labels[name] || name}</td><td>${value(row.latest_date)}</td><td>${row.covered_stocks}/${row.total_stocks}</td><td><span class="coverage-pill ${row.coverage_percent < 70 ? "critical" : row.coverage_percent < 95 ? "warning" : "healthy"}">${row.coverage_percent}%</span></td><td>${row.stale_stocks}</td></tr>`)
+    Object.entries(datasets).map(([name,row]) => {
+      const exact = ["prices", "institutions"].includes(name) && row.exact_date_coverage_percent != null;
+      const covered = exact ? row.exact_date_stocks : row.covered_stocks;
+      const coverage = exact ? row.exact_date_coverage_percent : row.coverage_percent;
+      const stale = exact ? row.off_latest_date_stocks : row.stale_stocks;
+      return `<tr><td>${market}</td><td>${labels[name] || name}${exact ? "（同日）" : ""}</td><td>${value(row.latest_date)}</td><td>${covered}/${row.total_stocks}</td><td><span class="coverage-pill ${coverage < 70 ? "critical" : coverage < 95 ? "warning" : "healthy"}">${coverage}%</span></td><td>${stale}</td></tr>`;
+    })
   ).join("");
 
+  const quarantine = data.quarantine || {};
+  $("#quarantineSummary").textContent = quarantine.active
+    ? `目前有 ${quarantine.total_symbols || 0} 檔價格未對齊各市場最新交易日，已禁止進入當日排行榜。`
+    : "所有股票價格均已對齊各市場最新交易日，沒有隔離項目。";
+  $("#quarantineRows").innerHTML = (quarantine.groups || []).map(group => {
+    const samples = (group.samples || []).map(row =>
+      `<a href="/stock/?symbol=${encodeURIComponent(row.symbol)}">${row.symbol} ${row.name || ""}</a>${row.latest_date ? `（${row.latest_date}）` : "（無資料）"}`
+    ).join("、");
+    return `<tr><td>${group.market}</td><td>${value(group.target_date)}</td><td>${group.lagging_count}</td><td>${samples || "—"}${group.lagging_count > (group.samples || []).length ? "…" : ""}</td></tr>`;
+  }).join("") || '<tr><td colspan="4">沒有被隔離的股票</td></tr>';
+
   const queues = data.queues || {};
+  const vnextCoverage = data.vnext_history_coverage || {};
   const fundamentalLabel = queues.fundamentals?.full_market_initialized ? "全市場五年研究資料" : "五年研究資料（尚未建立全市場佇列）";
-  $("#queueCards").innerHTML = [[fundamentalLabel,queues.fundamentals],["三年歷史價格",queues.prices]].map(([label,row]) => `<div><span>${label}</span><strong>${row?.completion_percent || 0}%</strong><small>完成 ${row?.completed || 0}/${row?.total || 0}｜剩餘 ${row?.remaining ?? ((row?.total || 0)-(row?.completed || 0))}｜失敗 ${row?.failed || 0}${row?.quota_limited ? `｜額度暫停 ${row.quota_limited}` : ""}</small></div>`).join("");
+  const queueCards = [[fundamentalLabel,queues.fundamentals],["三年歷史價格",queues.prices]].map(([label,row]) => `<div><span>${label}</span><strong>${row?.completion_percent || 0}%</strong><small>完成 ${row?.completed || 0}/${row?.total || 0}｜剩餘 ${row?.remaining ?? ((row?.total || 0)-(row?.completed || 0))}｜失敗 ${row?.failed || 0}${row?.quota_limited ? `｜額度暫停 ${row.quota_limited}` : ""}</small></div>`);
+  queueCards.push(`<div><span>vNext 歷史資格</span><strong>${vnextCoverage.eligible_percent || 0}%</strong><small>合格 ${vnextCoverage.eligible || 0}/${vnextCoverage.checked || 0}｜財報缺口 ${vnextCoverage.missing_counts?.financial_history || 0}｜價格缺口 ${vnextCoverage.missing_counts?.price_history || 0}｜新鮮度缺口 ${vnextCoverage.missing_counts?.freshness || 0}</small></div>`);
+  $("#queueCards").innerHTML = queueCards.join("");
   const resolved = (data.resolved_since_sync || []).map(message => `<article class="quality-issue resolved"><strong>已修復</strong><p>${message}</p><small>下一次全站同步會建立新的完整紀錄。</small></article>`).join("");
   $("#qualityIssues").innerHTML = (data.issues?.length ? data.issues.map(issue => `<article class="quality-issue ${issue.severity}"><strong>${issue.title}</strong><p>${issue.detail || "沒有更多錯誤資訊"}</p><small>建議：${issue.action}</small></article>`).join("") : '<div class="empty-state"><h2>目前沒有資料品質警告</h2><p>仍應在交易前確認資料日期與官方來源。</p></div>') + resolved;
   $("#sourceRows").innerHTML = (data.sources || []).map(row => `<tr><td>${row.label}</td><td>${row.primary}</td><td>${row.fallback}</td><td>${row.formal_use}</td></tr>`).join("");

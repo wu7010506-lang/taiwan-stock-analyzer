@@ -30,8 +30,10 @@ def _age_days(value: str | None, compact: bool = False) -> int | None:
 
 
 def analysis_sync_plan(database: Database, symbol: str) -> dict:
-    if not database.get_instrument(symbol):
+    instrument = database.get_instrument(symbol)
+    if not instrument:
         raise LookupError(f"找不到股票 {symbol}")
+    market = instrument["market"]
     with database.connect() as connection:
         specs = {
             "prices": ("daily_prices", "trade_date"),
@@ -49,24 +51,51 @@ def analysis_sync_plan(database: Database, symbol: str) -> dict:
                 (symbol,),
             ).fetchone()
             coverage[name] = dict(row)
+            market_row = connection.execute(
+                f"""SELECT MAX(d.{column}) AS latest_date
+                    FROM {table} d JOIN instruments i ON i.symbol=d.symbol
+                    WHERE i.market=?""",
+                (market,),
+            ).fetchone()
+            coverage[name]["market_latest_date"] = market_row["latest_date"]
         attempts = {row["dataset"]: dict(row) for row in connection.execute(
             "SELECT * FROM analysis_sync_state WHERE symbol=?", (symbol,))}
         market_latest_date = connection.execute(
-            "SELECT MAX(trade_date) AS trade_date FROM daily_prices WHERE close > 0"
+            """SELECT MAX(trade_date) AS trade_date FROM daily_prices
+               WHERE market=? AND close > 0""",
+            (market,),
         ).fetchone()["trade_date"]
     ages = {name: _age_days(item["latest_date"], name == "valuations")
             for name, item in coverage.items()}
     fetched_ages = {name: _age_days(item["last_fetched_at"]) for name, item in coverage.items()}
+    price_current = bool(
+        coverage["prices"]["latest_date"] and market_latest_date
+        and coverage["prices"]["latest_date"] >= market_latest_date
+    )
+    revenue_current = bool(
+        coverage["revenues"]["latest_date"]
+        and coverage["revenues"]["market_latest_date"]
+        and coverage["revenues"]["latest_date"]
+        >= coverage["revenues"]["market_latest_date"]
+    )
+    valuation_current = bool(
+        coverage["valuations"]["latest_date"] and market_latest_date
+        and coverage["valuations"]["latest_date"] >= market_latest_date.replace("-", "")
+    )
     ready = {
-        "prices": coverage["prices"]["rows"] >= 120 and (
-            bool(coverage["prices"]["latest_date"] and market_latest_date
-                 and coverage["prices"]["latest_date"] >= market_latest_date)
+        "prices": price_current and (
+            coverage["prices"]["rows"] >= 120
             or _successful_today(attempts.get("prices"))
-        ) or _limited_recently(attempts.get("prices")),
-        "revenues": (coverage["revenues"]["rows"] >= 10 and ages["revenues"] is not None
-                     and ages["revenues"] <= 75) or _limited_recently(attempts.get("revenues")),
-        "valuations": (coverage["valuations"]["rows"] >= 10 and ages["valuations"] is not None
-                       and ages["valuations"] <= 7) or _limited_recently(attempts.get("valuations")),
+            or _limited_recently(attempts.get("prices"))
+        ),
+        "revenues": revenue_current and (
+            coverage["revenues"]["rows"] >= 10
+            or _limited_recently(attempts.get("revenues"))
+        ),
+        "valuations": valuation_current and (
+            coverage["valuations"]["rows"] >= 10
+            or _limited_recently(attempts.get("valuations"))
+        ),
         "financials": coverage["financials"]["rows"] >= 1 and (
             ages["financials"] is not None and ages["financials"] <= 180
             or fetched_ages["financials"] is not None and fetched_ages["financials"] <= 7
@@ -74,7 +103,9 @@ def analysis_sync_plan(database: Database, symbol: str) -> dict:
         # A successful recent attempt counts for datasets that can legitimately return zero rows.
         "dividends": bool(coverage["dividends"]["rows"]) or _recent_success(attempts.get("dividends"), 30),
         "ownership": ages["ownership"] is not None and ages["ownership"] <= 14 or _recent_success(attempts.get("ownership"), 7),
-        "institutions": ages["institutions"] is not None and ages["institutions"] <= 7,
+        "institutions": bool(coverage["institutions"]["latest_date"])
+                        and bool(market_latest_date)
+                        and coverage["institutions"]["latest_date"] >= market_latest_date,
     }
     missing = [name for name in DATASETS if not ready[name]]
     history_sufficient = {
@@ -122,11 +153,15 @@ def _current_but_short(dataset: str, coverage: dict,
     if dataset == "prices":
         return bool(market_latest_date and coverage["latest_date"] >= market_latest_date)
     if dataset == "revenues":
-        age = coverage.get("age_days")
-        return age is not None and age <= 75
+        return bool(
+            coverage.get("market_latest_date")
+            and coverage["latest_date"] >= coverage["market_latest_date"]
+        )
     if dataset == "valuations":
-        age = coverage.get("age_days")
-        return age is not None and age <= 7
+        return bool(
+            market_latest_date
+            and coverage["latest_date"] >= market_latest_date.replace("-", "")
+        )
     return False
 
 
@@ -202,8 +237,10 @@ def sync_missing_analysis_data(database: Database, symbol: str, force: bool = Fa
             "coverage": after["coverage"]}
 
 
-def sync_watchlist_analysis_data(database: Database) -> dict:
-    rows = database.list_watchlist()
+def sync_watchlist_analysis_data(database: Database, max_stocks: int = 20) -> dict:
+    all_rows = database.list_watchlist()
+    # Positions are always processed first; remaining rows retain newest-first order.
+    rows = sorted(all_rows, key=lambda row: not row.get("is_held"))[:max(1, max_stocks)]
     results = []
     for row in rows:
         result = sync_missing_analysis_data(database, row["symbol"])
@@ -218,6 +255,7 @@ def sync_watchlist_analysis_data(database: Database) -> dict:
     completed = sum(item["status"] == "completed" for item in results)
     failures = [item for item in results if item["status"] != "completed"]
     return {"status": "completed" if completed == len(results) else "partial",
+            "total_stocks": len(all_rows), "deferred": max(0, len(all_rows) - len(rows)),
             "stocks": len(results), "completed": completed,
             "partial": len(results) - completed, "results": results,
             "failures": failures}

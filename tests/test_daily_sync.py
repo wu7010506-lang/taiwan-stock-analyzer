@@ -2,6 +2,7 @@ import json
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from app import daily_sync
 from app.database import Database
@@ -123,6 +124,54 @@ def test_scheduler_runs_once_after_close_on_business_day(monkeypatch):
     assert should_run_daily_sync(datetime(2026, 7, 26, 15, 10), None) is False
 
 
+def test_scheduler_retries_partial_run_after_cooldown(monkeypatch):
+    monkeypatch.setattr("app.sync_scheduler.settings.daily_sync_retry_minutes", 60)
+    now = datetime(2026, 7, 27, 16, 20, tzinfo=ZoneInfo("Asia/Taipei"))
+    partial = {"status": "partial", "started_at": "2026-07-27 07:10:00"}
+
+    assert should_run_daily_sync(now, partial) is True
+
+
+def test_scheduler_recovers_previous_day_partial_run_before_close(monkeypatch):
+    """An overnight restart must not leave yesterday's partial market data stale all day."""
+    monkeypatch.setattr("app.sync_scheduler.settings.daily_sync_enabled", True)
+    monkeypatch.setattr("app.sync_scheduler.settings.daily_sync_hour", 15)
+    monkeypatch.setattr("app.sync_scheduler.settings.daily_sync_minute", 40)
+    now = datetime(2026, 8, 14, 9, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+    previous_partial = {
+        "status": "partial",
+        "started_at": "2026-08-13 07:55:00",  # SQLite CURRENT_TIMESTAMP is UTC.
+    }
+
+    assert should_run_daily_sync(now, previous_partial) is True
+
+
+def test_scheduler_retries_weekend_partial_when_market_target_is_still_previous_day(
+    monkeypatch,
+):
+    """A UTC timestamp crossing midnight must not hide stale Friday market data."""
+    monkeypatch.setattr("app.sync_scheduler.settings.daily_sync_enabled", True)
+    monkeypatch.setattr("app.sync_scheduler.settings.daily_sync_retry_minutes", 60)
+    now = datetime(2026, 8, 15, 14, 40, tzinfo=ZoneInfo("Asia/Taipei"))
+    partial = {
+        "status": "partial",
+        "started_at": "2026-08-14 16:00:54",
+        "steps_json": json.dumps({
+            "market": {
+                "status": "partial",
+                "target_data_date": "2026-08-14",
+            },
+        }),
+    }
+
+    assert should_run_daily_sync(now, partial) is True
+    already_retried_today = {
+        **partial,
+        "started_at": "2026-08-15 06:35:00",
+    }
+    assert should_run_daily_sync(now, already_retried_today) is False
+
+
 def test_market_data_freshness_is_calculated_per_market(tmp_path: Path):
     database = Database(tmp_path / "stocks.db")
     database.initialize()
@@ -142,6 +191,8 @@ def test_market_data_freshness_is_calculated_per_market(tmp_path: Path):
     assert freshness["TWSE"]["prices"] == {
         "latest_date": "2026-07-24", "covered_stocks": 2, "total_stocks": 2,
         "coverage_percent": 100.0, "stale_stocks": 0,
+        "exact_date_stocks": 1, "exact_date_coverage_percent": 50.0,
+        "off_latest_date_stocks": 1,
     }
     assert freshness["TPEx"]["prices"]["latest_date"] == "2026-07-23"
     assert freshness["TPEx"]["prices"]["coverage_percent"] == 100.0

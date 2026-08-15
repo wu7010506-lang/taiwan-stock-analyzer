@@ -16,6 +16,7 @@ def run_fundamental_batch(
     database.prepare_fundamental_sync_queue(universe, years)
     database.enqueue_data_sync_jobs("financial_history", universe)
     if retry_failed:
+        database.reset_retryable_data_sync_jobs("financial_history")
         database.reset_failed_fundamental_syncs()
     processed = []
     quota_paused = False
@@ -69,6 +70,7 @@ def run_price_history_batch(
     database.prepare_price_sync_queue(universe)
     database.enqueue_data_sync_jobs("price_history", universe)
     if retry_failed:
+        database.reset_retryable_data_sync_jobs("price_history")
         database.reset_failed_price_syncs()
     processed = []
     for job in database.claim_price_sync_batch(batch_size):

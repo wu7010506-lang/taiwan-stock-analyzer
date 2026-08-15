@@ -1,12 +1,33 @@
 from app.database import Database
 from app.domain import Instrument
 from app.market_context import _normalize_event
-from app.recommendations import PROFILE_WEIGHTS, _percentile, recommend_stocks
+from app.recommendations import (
+    PROFILE_WEIGHTS,
+    _evidence_exclusion_reasons,
+    _percentile,
+    recommend_stocks,
+)
+from app.financial_integrity import assess_financial_integrity
 
 
 def test_percentile_supports_inverse_ranking():
     assert _percentile(30, [10, 20, 30]) == 1
     assert _percentile(10, [10, 20, 30], inverse=True) == 1
+
+
+def test_evidence_model_excludes_high_debt_and_negative_latest_free_cash_flow():
+    assert _evidence_exclusion_reasons({
+        "latest_debt_ratio": 77.65, "latest_free_cash_flow": -183_436_000,
+    }) == ["latest_debt_ratio_above_70", "latest_free_cash_flow_negative"]
+
+
+def test_financial_integrity_rejects_consistent_balance_sheet_unit_scale_break():
+    assert assess_financial_integrity([
+        {"fiscal_year": 2025, "fiscal_quarter": 4, "total_assets": 100_000,
+         "total_liabilities": 70_000, "equity": 30_000},
+        {"fiscal_year": 2026, "fiscal_quarter": 1, "total_assets": 100,
+         "total_liabilities": 70, "equity": 30},
+    ]) == ["financial_unit_scale_anomaly"]
 
 
 def test_research_weight_profiles_total_one_hundred_percent():

@@ -84,7 +84,7 @@ async function run() {
       <tr data-index="${index}"><td><strong>${row.symbol}</strong> ${row.name}<small>${row.market}</small></td><td>${row.themes.length ? row.themes.map(theme => `<span class="theme-tag">${theme}</span>`).join("") : "—"}</td><td>${row.popular_rank ? `#${row.popular_rank}` : "—"}</td><td>${formatMoney(row.turnover)}</td><td>${formatGrowth(row.revenue_yoy)}</td><td>${formatGrowth(row.roe)}</td><td>${formatNumber(row.pe)}</td><td>${row.dividend_yield == null ? "—" : formatNumber(row.dividend_yield) + "%"}</td><td>${row.completeness}%</td></tr>
     `).join("") : '<tr><td colspan="9">沒有符合目前條件的股票</td></tr>';
     body.querySelectorAll("tr[data-index]").forEach(tr => tr.addEventListener("click", () => {
-      window.location.href = `/?symbol=${encodeURIComponent(rows[Number(tr.dataset.index)].symbol)}`;
+      window.location.href = `/stock/?symbol=${encodeURIComponent(rows[Number(tr.dataset.index)].symbol)}`;
     }));
   } catch (error) { message.textContent = error.message; toast(error.message, true); }
   finally { setBusy(button, false); }

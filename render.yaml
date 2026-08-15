@@ -15,3 +15,7 @@ services:
         value: "20"
       - key: USER_AGENT
         value: taiwan-stock-analyzer/0.1
+      - key: REQUIRE_ADMIN_KEY
+        value: "true"
+      - key: ADMIN_API_KEY
+        generateValue: true

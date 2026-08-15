@@ -5,6 +5,7 @@ from math import sqrt
 from statistics import mean, median
 
 from app.database import Database
+from app.financial_integrity import assess_financial_integrity
 
 
 def _ratio(numerator: float | None, denominator: float | None) -> float | None:
@@ -98,6 +99,7 @@ def build_evidence_from_rows(rows: list[dict]) -> dict[str, dict]:
                 if annual and _ratio(annual[-1]["operating_income"], annual[-1]["revenue"])
                 is not None else None
             ),
+            "financial_integrity_issues": assess_financial_integrity(periods),
         }
     return output
 

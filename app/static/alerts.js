@@ -55,7 +55,7 @@ function renderAlerts() {
     </article>`;
   }).join("");
   $$("#alertGrid .alert-card").forEach(card => {
-    const open = () => location.href = `/?symbol=${encodeURIComponent(card.dataset.symbol)}`;
+    const open = () => location.href = `/stock/?symbol=${encodeURIComponent(card.dataset.symbol)}`;
     card.addEventListener("click", open);
     card.addEventListener("keydown", event => { if (event.key === "Enter") open(); });
     card.querySelector(".mark-read").addEventListener("click", event => {
@@ -82,7 +82,7 @@ function renderDecisions() {
     <ul>${item.positive_reasons.map(reason => `<li class="positive">${reason}</li>`).join("")}${item.risk_reasons.map(reason => `<li class="negative">${reason}</li>`).join("")}</ul>
   </article>`).join("") || `<p class="muted">請先在「我的股票」加入要監控的股票。</p>`;
   $$("#decisionGrid .decision-card").forEach(card => {
-    const open = () => location.href = `/?symbol=${encodeURIComponent(card.dataset.symbol)}`;
+    const open = () => location.href = `/stock/?symbol=${encodeURIComponent(card.dataset.symbol)}`;
     card.addEventListener("click", open); card.addEventListener("keydown", event => { if (event.key === "Enter") open(); });
   });
 }

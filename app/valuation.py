@@ -22,9 +22,9 @@ def _decimal(value: object) -> Decimal | None:
         raise ProviderError(f"估值數值格式異常：{value!r}") from exc
 
 
-def fetch_valuation_date(
-    client: httpx.Client, symbol: str, market: str, target: date
-) -> dict | None:
+def fetch_valuation_snapshot(
+    client: httpx.Client, market: str, target: date
+) -> dict[str, dict]:
     if market == "TWSE":
         url = (
             "https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d"
@@ -44,40 +44,52 @@ def fetch_valuation_date(
 
     if market == "TWSE":
         if payload.get("stat") != "OK":
-            return None
-        row = next((item for item in payload.get("data", []) if item[0] == symbol), None)
-        if not row:
-            return None
+            return {}
+        valuation_date = payload.get("date", target.strftime("%Y%m%d"))
         return {
-            "symbol": symbol,
-            "market": market,
-            "valuation_date": payload.get("date", target.strftime("%Y%m%d")),
-            "close_price": _decimal(row[2]),
-            "dividend_yield": _decimal(row[3]),
-            "dividend_year": str(row[4]),
-            "pe_ratio": _decimal(row[5]),
-            "pb_ratio": _decimal(row[6]),
-            "financial_period": str(row[7]),
+            str(row[0]).strip(): {
+                "symbol": str(row[0]).strip(),
+                "market": market,
+                "valuation_date": valuation_date,
+                "close_price": _decimal(row[2]),
+                "dividend_yield": _decimal(row[3]),
+                "dividend_year": str(row[4]).strip() or None,
+                "pe_ratio": _decimal(row[5]),
+                "pb_ratio": _decimal(row[6]),
+                "financial_period": str(row[7]).strip() or None,
+            }
+            for row in payload.get("data", [])
+            if len(row) > 7 and str(row[0]).strip()
         }
 
     tables = payload.get("tables") or []
     if not tables:
-        return None
-    row = next((item for item in tables[0].get("data", []) if item[0] == symbol), None)
-    if not row:
-        return None
+        return {}
+    valuation_date = _parse_date(
+        tables[0].get("date", target.isoformat())
+    ).strftime("%Y%m%d")
     return {
-        "symbol": symbol,
-        "market": market,
-        "valuation_date": _parse_date(tables[0].get("date", target.isoformat())).strftime("%Y%m%d"),
-        "close_price": None,
-        "pe_ratio": _decimal(row[2]),
-        "dividend_per_share": _decimal(row[3]),
-        "dividend_year": str(row[4]),
-        "dividend_yield": _decimal(row[5]),
-        "pb_ratio": _decimal(row[6]),
-        "financial_period": str(row[7]),
+        str(row[0]).strip(): {
+            "symbol": str(row[0]).strip(),
+            "market": market,
+            "valuation_date": valuation_date,
+            "close_price": None,
+            "pe_ratio": _decimal(row[2]),
+            "dividend_per_share": _decimal(row[3]),
+            "dividend_year": str(row[4]).strip() or None,
+            "dividend_yield": _decimal(row[5]),
+            "pb_ratio": _decimal(row[6]),
+            "financial_period": str(row[7]).strip() or None,
+        }
+        for row in tables[0].get("data", [])
+        if len(row) > 7 and str(row[0]).strip()
     }
+
+
+def fetch_valuation_date(
+    client: httpx.Client, symbol: str, market: str, target: date
+) -> dict | None:
+    return fetch_valuation_snapshot(client, market, target).get(symbol)
 
 
 def _percentile(values: list[float], current: float | None) -> float | None:

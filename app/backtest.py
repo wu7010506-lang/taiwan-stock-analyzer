@@ -16,6 +16,14 @@ WEIGHTS = {
 }
 
 
+def _resolved_weights(weights: dict[str, float] | None) -> dict[str, float]:
+    """Keep research weight changes explicit and isolated from live recommendations."""
+    resolved = WEIGHTS if weights is None else weights
+    if set(resolved) != set(WEIGHTS) or round(sum(float(value) for value in resolved.values()), 6) != 100:
+        raise ValueError("Research weights must contain every backtest factor and total 100")
+    return {key: float(value) for key, value in resolved.items()}
+
+
 def _percentile(value: float | None, values: list[float], inverse: bool = False) -> float:
     if value is None or not values:
         return 50.0
@@ -85,7 +93,9 @@ def _corporate_action_total_return(dividends: list[dict], entry_date: str,
 
 
 def _score_cross_section(evidence: dict[str, dict], financials: dict[str, list[dict]],
-                         prices: dict[str, list[dict]], as_of: str) -> list[dict]:
+                         prices: dict[str, list[dict]], as_of: str,
+                         weights: dict[str, float] | None = None) -> list[dict]:
+    weights = _resolved_weights(weights)
     eligible = {symbol: item for symbol, item in evidence.items() if item.get("evidence_ready")}
     fields = ("median_roe_annual", "median_operating_margin", "median_fcf_margin",
               "cash_conversion", "positive_fcf_ratio", "profitable_year_ratio",
@@ -111,11 +121,11 @@ def _score_cross_section(evidence: dict[str, dict], financials: dict[str, list[d
                       "durability": durability, "value": value,
                       "risk_resilience": risk, "growth_quality": growth,
                       "market_fit": 50.0}
-        score = sum(dimensions[key] * weight / 100 for key, weight in WEIGHTS.items())
+        score = sum(dimensions[key] * weight / 100 for key, weight in weights.items())
         latest_price = prices[symbol][-1]
         close = float(latest_price["close"])
         volume = float(latest_price.get("volume") or 0)
-        results.append({"symbol": symbol, "score": round(score, 1), "factors": dimensions,
+        results.append({"symbol": symbol, "market": latest_price["market"], "score": round(score, 1), "factors": dimensions,
                         "close": close, "volume": volume,
                         "turnover": close * volume, "snapshot_date": as_of})
     return sorted(results, key=lambda row: row["score"], reverse=True)
@@ -123,19 +133,23 @@ def _score_cross_section(evidence: dict[str, dict], financials: dict[str, list[d
 
 def historical_backtest(database: Database, horizon: int = 20, min_score: float = 65,
                         top_n: int = 10, start_date: str | None = None,
-                        end_date: str | None = None, min_turnover: float = 0) -> dict:
+                        end_date: str | None = None, min_turnover: float = 0,
+                        research_weights: dict[str, float] | None = None) -> dict:
     """Monthly walk-forward proxy using only statements available at each scoring date."""
+    research_weights = _resolved_weights(research_weights)
     with database.connect() as connection:
         financial_rows = [dict(row) for row in connection.execute(
             "SELECT * FROM financial_snapshots WHERE statement_date IS NOT NULL ORDER BY symbol,fiscal_year,fiscal_quarter")]
         price_rows = [dict(row) for row in connection.execute(
             "SELECT symbol,market,trade_date,close,volume FROM daily_prices ORDER BY symbol,trade_date")]
-        names = {row["symbol"]: row["name"] for row in connection.execute("SELECT symbol,name FROM instruments")}
+        instruments = [dict(row) for row in connection.execute("SELECT symbol,name,industry FROM instruments")]
         dividend_rows = [dict(row) for row in connection.execute(
             "SELECT symbol,ex_date,cash_dividend,stock_dividend_ratio,source "
             "FROM dividend_events WHERE cash_dividend IS NOT NULL "
             "OR stock_dividend_ratio IS NOT NULL ORDER BY symbol,ex_date"
         )]
+    names = {row["symbol"]: row["name"] for row in instruments}
+    industries = {row["symbol"]: row["industry"] for row in instruments}
     full_prices: dict[str, list[dict]] = defaultdict(list)
     financial_by_symbol: dict[str, list[dict]] = defaultdict(list)
     for row in price_rows:
@@ -147,7 +161,7 @@ def historical_backtest(database: Database, horizon: int = 20, min_score: float 
         dividends_by_symbol[row["symbol"]].append(row)
     calendar = sorted({row["trade_date"] for row in price_rows})
     scoring_dates = _monthly_dates(calendar, start_date, end_date)
-    outcomes, evaluated_dates = [], []
+    outcomes, evaluated_dates, selection_snapshots = [], [], []
     incomplete_exits = 0
     for as_of in scoring_dates:
         cutoff = date.fromisoformat(as_of)
@@ -161,10 +175,16 @@ def historical_backtest(database: Database, horizon: int = 20, min_score: float 
             {symbol: [row for row in rows if _available_on(row) <= cutoff]
              for symbol, rows in financial_by_symbol.items()},
             point_prices, as_of,
+            research_weights,
         )
         score_passed = [row for row in candidates if row["score"] >= min_score]
         liquid = [row for row in score_passed if row["turnover"] >= min_turnover]
         selected = liquid[:top_n]
+        selection_snapshots.append({"snapshot_date": as_of, "selected": [
+            {**row, "name": names.get(row["symbol"]), "industry": industries.get(row["symbol"]),
+             "rank": rank}
+            for rank, row in enumerate(selected, 1)
+        ]})
         coverage_row = None
         if candidates:
             coverage_row = {"date": as_of, "eligible": len(candidates),
@@ -191,7 +211,8 @@ def historical_backtest(database: Database, horizon: int = 20, min_score: float 
             cash_dividend_return = actions["cash"]
             result_return = actions["total"]
             drawdown = min((float(item["close"]) / entry - 1) * 100 for item in future)
-            outcomes.append({**row, "name": names.get(row["symbol"]), "rank": rank,
+            outcomes.append({**row, "name": names.get(row["symbol"]),
+                             "industry": industries.get(row["symbol"]), "rank": rank,
                              "return_percent": result_return,
                              "price_return_percent": price_return,
                              "cash_dividend_return_percent": cash_dividend_return,
@@ -206,6 +227,7 @@ def historical_backtest(database: Database, horizon: int = 20, min_score: float 
     drawdowns = [row["max_drawdown_percent"] for row in outcomes]
     unique_symbols = len({row["symbol"] for row in outcomes})
     return {"mode": "historical_backtest", "profile": "evidence_based", "horizon": horizon,
+            "research_weights": research_weights,
             "min_score": min_score, "top_n": top_n, "min_turnover": min_turnover,
             "total_signals": len(outcomes),
             "matured_signals": len(outcomes), "pending_signals": 0,
@@ -222,6 +244,7 @@ def historical_backtest(database: Database, horizon: int = 20, min_score: float 
                 "survivorship_bias_status": "not_eliminated",
             },
             "coverage": evaluated_dates, "outcomes": sorted(outcomes, key=lambda row: row["snapshot_date"], reverse=True)[:300],
+            "selection_snapshots": selection_snapshots[-1:] ,
             "limitations": ["財報採 Q1–Q3 延後 45 天、Q4 延後 90 天後才可用。",
                             "目前缺少完整歷史大盤序列，市場配適固定 50 分且不計超額報酬。",
                             "只納入具至少約兩年估值行情及完整五年財報的股票，未含交易成本與滑價。",

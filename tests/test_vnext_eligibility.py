@@ -4,7 +4,7 @@ from pathlib import Path
 
 from app.database import Database
 from app.domain import DailyPrice, Instrument
-from app.vnext_eligibility import assess_vnext_data_eligibility
+from app.vnext_eligibility import _latest_revenue_month_due, assess_vnext_data_eligibility
 from app.vnext_model import evaluate_vnext_stock, recommend_vnext_stocks
 
 
@@ -87,6 +87,25 @@ def test_compact_valuation_date_is_accepted_as_fresh_data(tmp_path: Path):
 
     assert result["status"] == "eligible"
     assert result["checks"]["freshness"]["valuation_days"] == 1
+
+
+def test_financial_unit_scale_anomaly_blocks_formal_vnext_eligibility(tmp_path: Path):
+    database = _database_with_complete_history(tmp_path)
+    database.upsert_financials({
+        "symbol": "2330", "market": "TWSE", "fiscal_year": 2026,
+        "fiscal_quarter": 1, "report_type": "finmind", "revenue": 1.1,
+        "gross_profit": .55, "operating_income": .33, "net_income": .22, "eps": 2.2,
+        "total_assets": 10.5, "total_liabilities": 2.1, "equity": 8.4,
+        "operating_cash_flow": .27, "capital_expenditure": .05, "free_cash_flow": .22,
+        "statement_date": "2026-05-15", "source": "test",
+    })
+
+    result = assess_vnext_data_eligibility(database, "2330", date(2026, 7, 25))
+
+    assert result["formal_recommendation_allowed"] is False
+    assert result["checks"]["financial_integrity"] == {
+        "passed": False, "issues": ["financial_unit_scale_anomaly"],
+    }
 
 
 def test_vnext_handles_a_fresh_valuation_row_without_pe(tmp_path: Path):
@@ -198,6 +217,23 @@ def test_vnext_recommendations_apply_position_and_market_cash_limits(tmp_path: P
     assert result["sector_limits_percent"] == 25
 
 
+def test_vnext_recommendations_include_compact_listed_dates(tmp_path: Path):
+    """Official feeds store listing dates as YYYYMMDD; they must not empty the universe."""
+    database = _database_with_complete_history(tmp_path)
+    with database.connect() as connection:
+        connection.execute("UPDATE instruments SET listed_date='20200101' WHERE symbol='2330'")
+
+    result = recommend_vnext_stocks(
+        database,
+        date(2026, 7, 25),
+        context={"market_score": 65, "overheat_score": 20, "regime": "bull_normal"},
+        limit=10,
+    )
+
+    assert result["universe_summary"]["evaluated"] == 1
+    assert result["universe_summary"]["eligible"] == 1
+
+
 def test_vnext_flags_institution_driven_price_surge_as_crowding(tmp_path: Path):
     database = _database_with_complete_history(tmp_path)
     closes = [100, 105, 110, 118, 125]
@@ -270,3 +306,6 @@ def test_empty_vnext_list_explains_which_data_is_missing(tmp_path: Path):
     assert result["missing_summary"] == {
         "financial_history": 1, "price_history": 1, "freshness": 1,
     }
+def test_monthly_revenue_is_not_stale_before_the_reporting_deadline():
+    assert _latest_revenue_month_due(date(2026, 8, 4)) == "2026-06"
+    assert _latest_revenue_month_due(date(2026, 8, 11)) == "2026-07"

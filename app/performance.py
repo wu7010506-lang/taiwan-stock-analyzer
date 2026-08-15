@@ -7,7 +7,6 @@ from statistics import mean, median
 from app.database import Database
 from app.providers import _parse_date
 from app.recommendations import recommend_stocks
-from app.recommendation_watchlist import add_top_recommendations_to_watchlist
 
 
 TRACKED_FACTORS = (
@@ -28,11 +27,12 @@ def capture_recommendation_snapshots(database: Database, context: dict,
             with database.connect() as connection:
                 connection.execute(
                     """INSERT INTO market_index_snapshots
-                       (trade_date, close, market_score, regime) VALUES(?,?,?,?)
+                       (trade_date, close, market_score, overheat_score, regime) VALUES(?,?,?,?,?)
                        ON CONFLICT(trade_date) DO UPDATE SET close=excluded.close,
-                         market_score=excluded.market_score, regime=excluded.regime,
+                         market_score=excluded.market_score, overheat_score=excluded.overheat_score,
+                         regime=excluded.regime,
                          fetched_at=CURRENT_TIMESTAMP""",
-                    (normalized_date, index_close, context.get("market_score"),
+                    (normalized_date, index_close, context.get("market_score"), context.get("overheat_score"),
                      context.get("regime")),
                 )
         except (TypeError, ValueError):
@@ -42,8 +42,6 @@ def capture_recommendation_snapshots(database: Database, context: dict,
         rows = recommend_stocks(database, limit=limit,
                                  min_completeness=0 if profile == "evidence_based" else 70,
                                  profile=profile, context=context)
-        if profile == "evidence_based":
-            add_top_recommendations_to_watchlist(database, rows, 20)
         payload = []
         for rank, row in enumerate(rows, 1):
             if row.get("close") is None or not row.get("trade_date"):

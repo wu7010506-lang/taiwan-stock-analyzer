@@ -40,6 +40,61 @@ def test_sync_plan_refreshes_stock_behind_market_date(tmp_path: Path):
     assert "prices" in plan["missing"]
 
 
+def test_sync_plan_refreshes_revenue_behind_market_month(tmp_path: Path):
+    database = Database(tmp_path / "stocks.db")
+    database.initialize()
+    database.upsert_instruments([
+        Instrument("2301", "Lite-On", "TWSE", "25"),
+        Instrument("2408", "Nanya Tech", "TWSE", "24"),
+    ])
+    with database.connect() as connection:
+        for month in range(10):
+            connection.execute(
+                """INSERT INTO monthly_revenues
+                   (symbol,market,revenue_month,revenue)
+                   VALUES('2301','TWSE',?,1000)""",
+                (f"2025-{9 + month:02d}" if month < 4 else f"2026-{month - 3:02d}",),
+            )
+        connection.execute(
+            """INSERT INTO monthly_revenues
+               (symbol,market,revenue_month,revenue)
+               VALUES('2408','TWSE','2026-07',1000)"""
+        )
+
+    plan = analysis_sync_plan(database, "2301")
+
+    assert plan["coverage"]["revenues"]["market_latest_date"] == "2026-07"
+    assert plan["coverage"]["revenues"]["latest_date"] == "2026-06"
+    assert "revenues" in plan["missing"]
+
+
+def test_sync_plan_refreshes_end_of_day_data_behind_latest_price(tmp_path: Path):
+    database = Database(tmp_path / "stocks.db")
+    database.initialize()
+    database.upsert_instruments([Instrument("2301", "Lite-On", "TWSE", "25")])
+    with database.connect() as connection:
+        connection.execute(
+            """INSERT INTO daily_prices
+               (symbol,market,trade_date,open,high,low,close,volume)
+               VALUES('2301','TWSE','2026-08-11',100,101,99,100,1000)"""
+        )
+        connection.execute(
+            """INSERT INTO valuations(symbol,market,valuation_date,pe_ratio)
+               VALUES('2301','TWSE','20260810',20)"""
+        )
+        connection.execute(
+            """INSERT INTO institutional_trades
+               (symbol,market,trade_date,foreign_buy,foreign_sell,foreign_net,
+                trust_buy,trust_sell,trust_net,source)
+               VALUES('2301','TWSE','2026-08-10',0,0,0,0,0,0,'official')"""
+        )
+
+    plan = analysis_sync_plan(database, "2301")
+
+    assert "valuations" in plan["missing"]
+    assert "institutions" in plan["missing"]
+
+
 def test_sync_plan_requires_history_when_only_latest_quotes_exist(tmp_path: Path):
     database = Database(tmp_path / "stocks.db")
     database.initialize()
@@ -80,3 +135,28 @@ def test_recent_limited_history_does_not_retry_forever(tmp_path: Path):
     assert "prices" not in plan["missing"]
     assert plan["coverage"]["prices"]["ready"] is True
     assert plan["coverage"]["prices"]["history_sufficient"] is False
+def test_watchlist_batch_is_bounded_and_reports_deferred_stocks(tmp_path: Path, monkeypatch):
+    from app import analysis_sync
+    from app.domain import Instrument
+
+    database = Database(tmp_path / "stocks.db")
+    database.initialize()
+    database.upsert_instruments([
+        Instrument(f"{index:04d}", f"Stock {index}", "TWSE", None)
+        for index in range(25)
+    ])
+    for index in range(25):
+        database.add_to_watchlist(f"{index:04d}", "TWSE")
+    calls = []
+    monkeypatch.setattr(
+        analysis_sync, "sync_missing_analysis_data",
+        lambda _database, symbol: calls.append(symbol) or {
+            "status": "completed", "requested": [], "remaining": [], "results": {},
+        },
+    )
+
+    result = analysis_sync.sync_watchlist_analysis_data(database, max_stocks=20)
+
+    assert len(calls) == 20
+    assert result["total_stocks"] == 25
+    assert result["deferred"] == 5

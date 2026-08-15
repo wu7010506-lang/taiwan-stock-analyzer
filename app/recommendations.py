@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from bisect import bisect_left, bisect_right
+
 from app.database import Database
 from app.financials import analyze_financials
 from app.market_context import get_market_context
@@ -30,14 +32,31 @@ PROFILE_WEIGHTS = {
 }
 
 
+def _evidence_exclusion_reasons(item: dict) -> list[str]:
+    """Return non-negotiable evidence-based research exclusions.
+
+    These are eligibility checks, not score penalties: a company with an
+    unsafe balance sheet or currently negative free cash flow must not be
+    promoted by strong historical or cross-sectional factors.
+    """
+    reasons = list(item.get("financial_integrity_issues") or [])
+    debt_ratio = item.get("latest_debt_ratio")
+    if debt_ratio is not None and float(debt_ratio) > 70:
+        reasons.append("latest_debt_ratio_above_70")
+    latest_fcf = item.get("latest_free_cash_flow")
+    if latest_fcf is not None and float(latest_fcf) < 0:
+        reasons.append("latest_free_cash_flow_negative")
+    return reasons
+
+
 def _percentile(value: float | None, values: list[float], inverse: bool = False) -> float | None:
     if value is None or not values:
         return None
     ordered = sorted(values)
     if len(ordered) == 1:
         return .5
-    below = sum(item < value for item in ordered)
-    equal = sum(item == value for item in ordered)
+    below = bisect_left(ordered, value)
+    equal = bisect_right(ordered, value) - below
     rank = (below + max(equal - 1, 0) / 2) / max(len(ordered) - 1, 1)
     return 1 - rank if inverse else rank
 
@@ -103,6 +122,7 @@ def recommend_stocks(
                     "positive_eps_year_ratio", "revenue_cagr_annual", "latest_debt_ratio",
                     "margin_variation", "roe_variation"):
             item.setdefault(key, None)
+        item.setdefault("financial_integrity_issues", [])
     if not items:
         return []
     context = context if context is not None else get_market_context()
@@ -113,19 +133,35 @@ def recommend_stocks(
             "positive_fcf_ratio", "profitable_year_ratio", "positive_eps_year_ratio",
             "revenue_cagr_annual", "latest_debt_ratio", "margin_variation",
             "roe_variation")
-    universes = {key: [float(item[key]) for item in items if item[key] is not None] for key in keys}
+    universes = {
+        key: sorted(float(item[key]) for item in items if item[key] is not None)
+        for key in keys
+    }
+    industry_universes: dict[str | None, dict[str, list[float]]] = {}
+    for item in items:
+        industry = item.get("industry")
+        bucket = industry_universes.setdefault(industry, {key: [] for key in keys})
+        for key in keys:
+            if item[key] is not None:
+                bucket[key].append(float(item[key]))
+    for bucket in industry_universes.values():
+        for values in bucket.values():
+            values.sort()
     events_by_symbol: dict[str, list[dict]] = {}
     for event in context.get("events", []):
         events_by_symbol.setdefault(event["symbol"], []).append(event)
 
     def ranked(item: dict, key: str, inverse: bool = False) -> float | None:
-        peers = [float(peer[key]) for peer in items
-                 if peer[key] is not None and peer["industry"] == item["industry"]]
+        peers = industry_universes.get(item.get("industry"), {}).get(key, [])
         return _percentile(item[key], peers if len(peers) >= 5 else universes[key], inverse)
 
     results = []
     for item in items:
         if item["completeness"] < min_completeness:
+            continue
+        # A unit-scale anomaly invalidates every score derived from the latest
+        # financial statement, regardless of the selected research profile.
+        if item.get("financial_integrity_issues"):
             continue
         profitable = item["eps"] is not None and item["eps"] > 0
         checks = {
@@ -144,7 +180,10 @@ def recommend_stocks(
         }
         if not checks.get(profile, False):
             continue
-        ranks = {key: ranked(item, key, key in {"debt_ratio", "pe", "pb"}) for key in keys}
+        if profile == "evidence_based" and _evidence_exclusion_reasons(item):
+            continue
+        ranks = {key: ranked(item, key, key in {"debt_ratio", "latest_debt_ratio", "pe", "pb"})
+                 for key in keys}
         rank = lambda name, default=.5: ranks[name] if ranks[name] is not None else default
         quality = (rank("roe") * .5 + rank("gross_margin") * .25 + rank("debt_ratio") * .25) * 100
         growth = rank("revenue_yoy") * 100

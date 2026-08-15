@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="台股每日關注清單與短線研究證據">
+  <title>今日關注｜台股研究台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="台股研究台首頁"><span class="brand-mark">TW</span><span>台股研究台</span></a>
+    <nav class="top-actions" aria-label="主要導覽">
+      <a href="/stock/" class="text-link nav-link">看股票</a>
+      <a href="/screener/" class="text-link nav-link">找股票</a>
+      <a href="/watchlist/" class="text-link nav-link">我的追蹤</a>
+      <a href="/research/" class="text-link nav-link">研究與資料</a>
+    </nav>
+  </header>
+  <main class="shell">
+    <section class="intro">
+      <div>
+        <p class="eyebrow">TODAY'S FOCUS · 3–10 個交易日研究</p>
+        <h1>今日關注</h1>
+        <p>只保留十檔最值得繼續追蹤的股票。每一檔都列出目前狀態、下一個確認條件與失效風險，讓你不必自行解讀技術指標。</p>
+      </div>
+      <a class="button secondary button-link" href="/stock/?symbol=2454">查看個股範例</a>
+    </section>
+    <section id="focusStatus" class="watchlist-summary" aria-live="polite">正在整理最新資料與短線狀態。</section>
+    <section class="table-card dashboard-panel">
+      <div class="section-heading"><div><p class="eyebrow">FIXED DAILY LIST</p><h2>十檔關注名單</h2></div><span class="unit-note">模型觀察優先，接著是通過基本面排雷與流動性門檻的短線研究候選。</span></div>
+      <div id="focusList" class="dashboard-actions"></div>
+    </section>
+    <section class="table-card dashboard-panel">
+      <div class="section-heading"><div><p class="eyebrow">HOW TO USE</p><h2>怎麼看這份清單</h2></div></div>
+      <ul class="dashboard-risk-list">
+        <li><strong>等待突破：</strong>尚未確認，等價格與成交量條件同時成立後再重新檢視。</li>
+        <li><strong>暫不操作：</strong>目前技術或市場條件不支持；不是賣出訊號，也不是預測下跌。</li>
+        <li><strong>模型觀察：</strong>基本面與估值符合正式模型資格，但短線時機仍須獨立確認。</li>
+      </ul>
+    </section>
+    <p class="warning-copy dashboard-warning">本頁是研究與風險檢查工具，不是買賣指令，也不保證報酬。資料日期、流動性、成本與樣本外驗證限制都會影響結果。</p>
+  </main>
+  <script src="/static/focus.js"></script>
+</body>
+</html>

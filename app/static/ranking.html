@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>短線排行榜｜台股研究台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/"><span class="brand-mark">TW</span><span>台股研究台</span></a><div class="top-actions"></div></header>
+  <main class="shell">
+    <section class="intro">
+      <div><p class="eyebrow">SHORT-TERM RESEARCH · 3–10 SESSIONS</p><h1>短線排行榜</h1><p>從通過基本面安全門檻的股票中，列出今日最值得優先研究的十檔；排名是研究優先順序，不是獲利預測或買賣指令。</p></div>
+    </section>
+    <section id="rankingStatus" class="watchlist-summary">正在讀取短線研究資料…</section>
+    <section id="rankingRules" class="decision-gate"></section>
+    <section id="privatePositionArea" class="dashboard-panel private-position-area hidden">
+      <div class="section-heading compact"><div><p class="eyebrow">MY SHORT-TERM POSITIONS</p><h2>我的短線持倉與賣出提醒</h2><p id="positionSummary">正在檢查最新收盤與持有天數…</p></div></div>
+      <div id="positionList" class="dashboard-actions" aria-live="polite"></div>
+      <p class="unit-note">賣出建議依最新收盤產生，於下一交易日開盤執行；只有你登記實際成交後，系統才會更新股數與停損。</p>
+    </section>
+    <section id="rankingList" class="dashboard-actions" aria-live="polite"></section>
+    <p class="unit-note">資料僅使用訊號日以前的日價量與當時可得財報；固定規則尚未通過足夠樣本外驗證，請勿將本頁視為自動交易訊號。</p>
+  </main>
+  <dialog id="purchaseDialog" class="position-dialog">
+    <form id="purchaseForm">
+      <div class="section-heading compact"><div><p class="eyebrow">RECORD ACTUAL PURCHASE</p><h2 id="purchaseTitle">登記實際買進</h2><p>請填實際成交資料；停損與目標可沿用排行榜計畫後再調整。</p></div><button class="dialog-close" type="button" data-close-dialog="purchaseDialog" aria-label="關閉">×</button></div>
+      <input id="purchaseSymbol" type="hidden"><input id="purchaseMarket" type="hidden"><input id="purchaseSignalDate" type="hidden"><input id="purchaseStrategyVersion" type="hidden">
+      <div class="position-form-grid">
+        <label>實際買進日<input id="entryDate" type="date" required></label>
+        <label>實際買進價<input id="entryPrice" type="number" min="0.01" step="0.01" required></label>
+        <label>股數<input id="entryShares" type="number" min="1" step="1" required></label>
+        <label>初始停損價<input id="stopPrice" type="number" min="0.01" step="0.01" required></label>
+        <label>第一目標價<input id="targetPrice" type="number" min="0.01" step="0.01" required></label>
+      </div>
+      <div class="dialog-actions"><button class="button" type="button" data-close-dialog="purchaseDialog">取消</button><button class="button primary" type="submit">儲存持倉</button></div>
+    </form>
+  </dialog>
+  <dialog id="executionDialog" class="position-dialog">
+    <form id="executionForm">
+      <div class="section-heading compact"><div><p class="eyebrow">CONFIRM EXECUTION</p><h2 id="executionTitle">登記實際賣出</h2><p id="executionPrompt"></p></div><button class="dialog-close" type="button" data-close-dialog="executionDialog" aria-label="關閉">×</button></div>
+      <input id="executionSymbol" type="hidden"><input id="executionAction" type="hidden"><input id="executionReason" type="hidden">
+      <div class="position-form-grid">
+        <label>實際成交日<input id="executionDate" type="date" required></label>
+        <label>實際成交價<input id="executionPrice" type="number" min="0.01" step="0.01" required></label>
+        <label>實際賣出股數<input id="executionShares" type="number" min="1" step="1" required></label>
+      </div>
+      <div class="dialog-actions"><button class="button" type="button" data-close-dialog="executionDialog">取消</button><button class="button primary" type="submit">確認已成交</button></div>
+    </form>
+  </dialog>
+  <div id="rankingToast" class="toast hidden" role="status" aria-live="polite"></div>
+  <script src="/static/ranking.js?v=20260815-split-ranking-2"></script><script src="/static/global-sync.js?v=20260805-ranking"></script>
+</body>
+</html>
