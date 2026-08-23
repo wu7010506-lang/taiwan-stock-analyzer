@@ -62,6 +62,41 @@
     <div id="performanceStatus" class="watchlist-summary">正在載入模型成績⋯</div>
     <div id="paperGovernanceStatus" class="watchlist-summary warning-copy">正在檢查候選策略治理狀態⋯</div>
     <div id="performanceLimitations" class="watchlist-summary"></div>
+    <section id="t108FrozenCandidate" class="table-card performance-table-card" aria-labelledby="t108FrozenCandidateTitle">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">FROZEN RESEARCH CHALLENGER · NOT A LIVE STRATEGY</p>
+          <h2 id="t108FrozenCandidateTitle">T108 LOW50｜目前最有希望的凍結研究候選</h2>
+          <p>規則已由 T109 完全鎖定，現在只能累積真正前向紙上紀錄；不會進入正式推薦、排行榜或自動交易。</p>
+        </div>
+        <span class="performance-state pending">前向 0／24 形成日</span>
+      </div>
+      <div class="watchlist-summary warning-copy">
+        <strong>證據限制：</strong>2019～2026-08-14 已被研究反覆查看，屬污染歷史；T108 也未通過「50 bps 淨報酬高於 100% TAIEX」的額外門檻。以下數字只能說明歷史特性，不代表策略有效、可實盤或保證獲利。
+      </div>
+      <div class="performance-summary" aria-label="T108 歷史研究摘要">
+        <article><span>10 bps 淨報酬</span><strong class="positive-text">+528.865%</strong></article>
+        <article><span>10 bps 同曝險超額</span><strong class="positive-text">+432.086</strong></article>
+        <article><span>10 bps 最大回撤</span><strong class="negative-text">−16.618%</strong></article>
+        <article><span>50 bps 淨報酬</span><strong class="positive-text">+405.237%</strong></article>
+        <article><span>50 bps 同曝險超額</span><strong class="positive-text">+309.101</strong></article>
+        <article><span>50 bps 最大回撤</span><strong class="negative-text">−17.331%</strong></article>
+        <article><span>歷史正超額年度</span><strong>7／7</strong></article>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>規則</th><th>凍結設定</th><th>治理狀態</th></tr></thead>
+          <tbody>
+            <tr><td>排序分數</td><td>20日報酬 1／6、60日報酬 1／6、SMA60距離 1／3、20日波動率 1／3</td><td>鎖定，不再調參</td></tr>
+            <tr><td>市場與股票池</td><td>TAIEX 高於 SMA200；上市上櫃普通股流動性前 50%</td><td>ETF 排除</td></tr>
+            <tr><td>組合</td><td>每20個交易日形成；最多10檔、每檔5%、單一產業10%、總曝險50%</td><td>無合格標的時保留現金</td></tr>
+            <tr><td>執行</td><td>下一官方交易日開盤；10／50 bps 滑價；無法成交取消</td><td>PIT、生命週期與資料同步 gate</td></tr>
+            <tr><td>前向資格</td><td>至少24個新形成日且橫跨12個月</td><td>歷史截止 2026-08-14；目前尚無合格前向形成日</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="unit-note">T109 rule-lock SHA-256：F04B325231C90AA37B34BAA32039A64C743A797FA7C32788B661C598C078D8BE。此區為唯讀研究揭露，不構成投資建議。</p>
+    </section>
     <section class="table-card performance-table-card">
       <div class="section-heading"><div><p class="eyebrow" id="performanceTableEyebrow">HISTORICAL SIGNALS</p><h2 id="performanceTableTitle">歷史選股結果</h2></div></div>
       <div class="table-scroll"><table><thead id="performanceHead"></thead><tbody id="performanceRows"></tbody></table></div>
