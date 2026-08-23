@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="T108 LOW50 凍結研究候選的規則、歷史證據與前向驗證狀態">
+  <title>T108 研究候選｜台股研究台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/recommendations/" aria-label="台股研究台"><span class="brand-mark">TW</span><span>台股研究台</span></a>
+    <div class="top-actions">
+      <a href="/alerts/" class="text-link nav-link">提醒中心</a>
+      <a href="/watchlist/" class="text-link nav-link">我的股票</a>
+      <a href="/recommendations/" class="text-link nav-link">股票推薦</a>
+      <a href="/research-candidate/" class="text-link nav-link active" aria-current="page">研究候選</a>
+      <a href="/screener/" class="text-link nav-link">所有股票</a>
+    </div>
+  </header>
+  <main class="shell">
+    <section class="intro">
+      <div>
+        <p class="eyebrow">FROZEN RESEARCH CHALLENGER · NOT A LIVE STRATEGY</p>
+        <h1>T108 LOW50</h1>
+        <p>目前最有希望的凍結研究候選；規則由 T109 鎖定，現在只能累積真正前向紙上證據。</p>
+      </div>
+      <a class="button secondary" href="/recommendations/">返回股票推薦</a>
+    </section>
+
+    <section class="watchlist-summary warning-copy">
+      <strong>不是正式策略：</strong>2019～2026-08-14 已被研究反覆查看，屬污染歷史。T108 未通過「50 bps 淨報酬高於 100% TAIEX」的額外門檻；本頁不產生今日買進名單，也不會改變推薦、排行榜或自動交易。
+    </section>
+
+    <section class="method-card">
+      <div><strong>前向驗證：0／24 形成日</strong><span>歷史截止 2026-08-14｜至少還需橫跨 12 個月</span></div>
+      <p>12 個新形成日前只累積紀錄；至少 24 個形成日且跨滿 12 個月，才可討論策略資格。官方 PIT、股價與 TAIEX 沒有同步時，必須記錄不判定且名單為空。</p>
+    </section>
+
+    <section class="table-card">
+      <div class="section-heading"><div><p class="eyebrow">HISTORICAL STRESS SUMMARY</p><h2>污染歷史結果</h2></div></div>
+      <div class="metric-grid" aria-label="T108 歷史研究摘要">
+        <article class="metric"><span>10 bps 淨報酬</span><strong>+528.865%</strong><small>同曝險超額 +432.086</small></article>
+        <article class="metric"><span>10 bps 最大回撤</span><strong>−16.618%</strong><small>Sharpe 1.4447</small></article>
+        <article class="metric"><span>50 bps 淨報酬</span><strong>+405.237%</strong><small>同曝險超額 +309.101</small></article>
+        <article class="metric"><span>50 bps 最大回撤</span><strong>−17.331%</strong><small>2019～2025 為 7／7 年正同曝險超額</small></article>
+      </div>
+      <p class="warning-copy">100% TAIEX 同期累積報酬為 +508.455%；因此 50 bps 策略淨報酬仍落後滿曝險大盤。低曝險策略的主要比較基準是同曝險 TAIEX，但兩種口徑都必須揭露。</p>
+    </section>
+
+    <section class="table-card" style="margin-top: 18px">
+      <div class="section-heading"><div><p class="eyebrow">FROZEN RULE</p><h2>完全鎖定規則</h2></div></div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>項目</th><th>設定</th><th>治理</th></tr></thead>
+          <tbody>
+            <tr><td>排序分數</td><td>20日報酬 1／6、60日報酬 1／6、SMA60距離 1／3、20日波動率 1／3</td><td>不得再調參</td></tr>
+            <tr><td>市場濾網</td><td>TAIEX 收盤高於 SMA200 才持有風險部位</td><td>否則保留現金</td></tr>
+            <tr><td>股票池</td><td>上市、上櫃普通股；排除 ETF；流動性前 50%</td><td>股票生命週期必須有效</td></tr>
+            <tr><td>組合</td><td>每20個官方交易日形成；最多10檔、每檔5%、單一產業10%、總曝險50%</td><td>無合格標的不湊滿</td></tr>
+            <tr><td>執行</td><td>下一官方交易日開盤；10／50 bps 滑價；無法成交取消</td><td>資料不同步不判定</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <details class="research-notes" style="margin-top: 22px">
+      <summary>版本鎖定與投資限制</summary>
+      <div>
+        <p>任何公式、權重、股票池、交易時鐘、成本或風控變更，都會建立新候選並把前向計數歸零；不佳結果不得刪除或覆蓋。</p>
+        <p>T109 rule-lock SHA-256：<code>F04B325231C90AA37B34BAA32039A64C743A797FA7C32788B661C598C078D8BE</code></p>
+        <p class="warning-copy">本頁為唯讀研究揭露，不構成投資建議。歷史績效不代表未來結果，未經使用者另行授權也不會送出真實委託。</p>
+      </div>
+    </details>
+  </main>
+</body>
+</html>

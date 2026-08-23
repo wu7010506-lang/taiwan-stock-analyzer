@@ -78,6 +78,22 @@ def test_recommendations_have_their_own_explainable_page():
     assert "profile=${profile}" in script.text
     assert 'id="popularGrid"' in response.text
     assert 'api("/popular-stocks?limit=12")' in script.text
+    assert 'href="/research-candidate/"' in response.text
+    assert "T108 LOW50" in response.text
+
+
+def test_frozen_t108_research_candidate_has_a_dedicated_public_page():
+    with TestClient(app) as client:
+        page = client.get("/research-candidate/")
+
+    assert page.status_code == 200
+    assert "目前最有希望的凍結研究候選" in page.text
+    assert "前向驗證：0／24 形成日" in page.text
+    assert "屬污染歷史" in page.text
+    assert "本頁不產生今日買進名單" in page.text
+    assert "+405.237%" in page.text
+    assert "20日報酬 1／6、60日報酬 1／6、SMA60距離 1／3、20日波動率 1／3" in page.text
+    assert "F04B325231C90AA37B34BAA32039A64C743A797FA7C32788B661C598C078D8BE" in page.text
 
 
 def test_ui_auto_syncs_one_year_when_stock_is_selected():

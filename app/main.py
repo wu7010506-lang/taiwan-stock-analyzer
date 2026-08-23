@@ -71,6 +71,11 @@ def alerts_interface() -> FileResponse:
     return FileResponse(static_dir / "alerts.html")
 
 
+@app.get("/research-candidate/", include_in_schema=False)
+def research_candidate_interface() -> FileResponse:
+    return FileResponse(static_dir / "research-candidate.html")
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
